@@ -29,28 +29,47 @@
 # afterwards, keep the URL unlisted, and watch the Anthropic console. For
 # anything with a real child in it, neither is acceptable.
 
+# WHAT IS ACTUALLY DEPLOYED, and how it differs from the ideal above.
+#
+# The live environment runs on Render's free tier, which has one architectural
+# consequence worth stating rather than discovering: **private services are not
+# available on free**, so `tutor-symbolic` is not deployed and `SYMBOLIC_URL` is
+# unset. SymPy therefore runs in-process inside the API — the exact trade
+# services/orchestrator/symbolic_client.py warns against, accepted here because
+# the deployed data is engineer-written fixture content with no real child in
+# it. Restoring the isolation is uncommenting the `pserv` block below and
+# setting SYMBOLIC_URL; it is a plan change, not a code change.
+#
+# Free Postgres also expires 30 days after creation.
+
 databases:
   - name: tutor-db
-    plan: basic-256mb
+    plan: free
     postgresMajorVersion: "16"
+    # Verified on the live instance: pgvector is available and
+    # `CREATE EXTENSION vector` succeeds on the free plan.
 
 services:
   # The §3.5 checker. `type: pserv` is the whole point — a private service has
   # no public URL, so the component that evaluates attacker-influenced input is
   # not addressable from outside the account. It is the nearest thing Render
   # offers to the no-egress container in ops/docker-compose.yml.
-  - type: pserv
-    name: tutor-symbolic
-    runtime: docker
-    plan: starter
-    dockerfilePath: ./ops/symbolic.Dockerfile
-    dockerContext: .
-    region: oregon
+  #
+  # Commented out because pserv requires a paid plan. Uncomment, and add the
+  # SYMBOLIC_URL env var below, to get the isolated path back.
+  #
+  # - type: pserv
+  #   name: tutor-symbolic
+  #   runtime: docker
+  #   plan: starter
+  #   dockerfilePath: ./ops/symbolic.Dockerfile
+  #   dockerContext: .
+  #   region: oregon
 
   - type: web
     name: tutor-api
     runtime: python
-    plan: starter
+    plan: free
     region: oregon
     buildCommand: pip install -r requirements.txt
     # Migrations run before the server binds, so a deploy that cannot migrate
@@ -74,11 +93,10 @@ services:
           name: tutor-db
           property: connectionString
       # Render hands out `postgres://`; packages/dburl.py pins it to psycopg 3.
-      - key: SYMBOLIC_URL
-        fromService:
-          name: tutor-symbolic
-          type: pserv
-          property: hostport
+      # Unset on the free plan, so the checker runs in-process. Set this to
+      # the private service's host:port to restore container isolation.
+      # - key: SYMBOLIC_URL
+      #   fromService: {name: tutor-symbolic, type: pserv, property: hostport}
       # Set this yourself in the dashboard. `sync: false` keeps it out of the
       # repo and out of the blueprint's diff.
       - key: ANTHROPIC_API_KEY
@@ -103,7 +121,7 @@ services:
     routes:
       - type: rewrite
         source: /student/*
-        destination: https://tutor-api.onrender.com/student/*
+        destination: https://tutor-api-46lx.onrender.com/student/*
       - type: rewrite
         source: /health
-        destination: https://tutor-api.onrender.com/health
+        destination: https://tutor-api-46lx.onrender.com/health
