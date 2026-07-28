@@ -1,0 +1,86 @@
+@import 'tailwindcss';
+
+/**
+ * Design tokens, verbatim from FigmaSpec.
+ *
+ * Tailwind v4 reads `@theme` at build time, so every name below is also a
+ * utility: `bg-jungle-dark`, `text-fruit-yellow`, `font-display`. Nothing in a
+ * component hardcodes a hex — a palette that lives in two places drifts, and the
+ * drift shows up as one card being almost the right green.
+ */
+@theme {
+  --color-jungle-dark: #1e2f1a;
+  --color-jungle-mid: #047857;
+  --color-jungle-light: #10b981;
+  --color-bark-dark: #3f1b0b;
+  --color-bark-mid: #92400e;
+  --color-fruit-orange: #f97316;
+  --color-fruit-amber: #d97706;
+  --color-fruit-yellow: #fbbf24;
+  --color-fruit-purple: #8b5cf6;
+  --color-sky-blue: #bae6fd;
+  --color-ink: #ffffff;
+  --color-muted: #9ca3af;
+
+  --font-display: 'Outfit', system-ui, sans-serif;
+  --font-body: 'Manrope', system-ui, sans-serif;
+
+  /* Spec type scale. Named by role so a component asks for "question text"
+     rather than for 32px, and a scale change lands in one place. */
+  --text-hero: 56px;
+  --text-hero--line-height: 1.05;
+  --text-hero--letter-spacing: 2px;
+  --text-question: 32px;
+  --text-question--line-height: 1.2;
+  --text-heading: 24px;
+  --text-subheading: 20px;
+  --text-button: 18px;
+  --text-body: 14px;
+  --text-body--line-height: 140%;
+  --text-hint: 13px;
+  --text-hint--line-height: 140%;
+  --text-caption: 11px;
+
+  --radius-card: 16px;
+  --radius-control: 12px;
+}
+
+@layer base {
+  html {
+    background-color: var(--color-jungle-dark);
+  }
+
+  body {
+    font-family: var(--font-body);
+    font-weight: 700;
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* §11.5 requires a low-stimulation path. Every animation in this client is
+     decorative — nothing communicates state through motion alone — so honouring
+     the OS setting costs the child nothing and spares anyone for whom the
+     jungle is too much. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility text-shadow-deep {
+  text-shadow: 0 2px 0 rgb(0 0 0 / 0.35);
+}
+
+/* The canopy: layered radial washes rather than an image, so there is no asset
+   to load before a child can start and nothing to go missing offline. */
+@utility jungle-canopy {
+  background-image:
+    radial-gradient(80rem 40rem at 15% -10%, rgb(4 120 87 / 0.45), transparent 60%),
+    radial-gradient(60rem 35rem at 95% 5%, rgb(16 185 129 / 0.28), transparent 55%),
+    radial-gradient(70rem 50rem at 50% 115%, rgb(4 120 87 / 0.3), transparent 60%);
+}
