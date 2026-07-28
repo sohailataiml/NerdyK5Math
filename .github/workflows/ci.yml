@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Order per web/hooks.md: format -> lint -> type check -> structure -> tests.
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Type check
+        run: mypy
+
+      # The three structural rules from Implementation-Plan.md §1. These are
+      # architecture constraints, so they fail the build rather than relying on
+      # a reviewer noticing: stages stay independent, the model SDK stays behind
+      # packages.llm (so no call escapes the LLMCall ledger), and the domain
+      # layer stays pure.
+      - name: Import contracts
+        run: lint-imports
+
+      - name: Tests
+        run: pytest -m "not integration"
+
+      # The deterministic eval suite (rule pre-check) runs on every PR: it needs
+      # no key, costs nothing, and catches a regression in the fallback path
+      # before it reaches a student. Model-backed suites are NOT run here — they
+      # are nondeterministic and billed, so they run on demand and their results
+      # gate merges via the recorded baseline, not via CI wall time.
+      - name: Eval — diagnosis (deterministic baseline)
+        run: python -m eval.harness.cli run diagnosis
+
+      # Published prompts are immutable. This turns that from a convention into
+      # a build failure: editing a published version changes its hash, and a
+      # `prompt_version` that no longer identifies its text makes every
+      # historical quality metric unattributable (§8).
+      - name: Prompts — verify published versions are unmodified
+        run: python -m packages.prompts.cli verify
+
+      # P0.5 and P0.10. Run separately from the main suite so a regression here
+      # is unmistakable in the CI output: §12 makes leakage the defining risk of
+      # this architecture, and a leak reaching a child cannot be taken back.
+      # These are hard gates, not tracked metrics.
+      - name: Adversarial — leak corpus (100% must-fail) and prompt injection
+        run: pytest tests/test_adversarial.py -v
+
+  # Split out because these need a real Postgres: SQLite silently accepts the
+  # JSON variant of the embedding column, so only this job proves pgvector and
+  # the `vector` column type actually work (§3.2).
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tutor
+          POSTGRES_PASSWORD: tutor
+          POSTGRES_DB: tutor
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U tutor -d tutor"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # A dedicated database: these tests drop every table, so they must never
+      # point at one holding anything worth keeping.
+      - name: Create the throwaway test database
+        env:
+          PGPASSWORD: tutor
+        run: psql -h localhost -p 5433 -U tutor -d tutor -c 'CREATE DATABASE tutor_test OWNER tutor'
+
+      - name: Integration tests
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://tutor:tutor@localhost:5433/tutor_test
+        run: pytest -m integration

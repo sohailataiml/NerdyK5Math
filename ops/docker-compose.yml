@@ -1,0 +1,71 @@
+# Local Postgres for development and integration tests (M0.3).
+#
+# pgvector is baked into the image rather than installed at runtime, so a fresh
+# `docker compose up` gives the same database CI and production get. §3.2's
+# curriculum retrieval needs the extension; everything else is plain relational.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: tutor-postgres
+    environment:
+      POSTGRES_USER: tutor
+      POSTGRES_PASSWORD: tutor
+      POSTGRES_DB: tutor
+    ports:
+      - "5433:5432" # 5433 on the host, to avoid colliding with a local Postgres
+    volumes:
+      - tutor-pgdata:/var/lib/postgresql/data
+      # Creates the separate `tutor_test` database the destructive migration
+      # tests run against. Only executes on a fresh volume.
+      - ./init-test-db.sql:/docker-entrypoint-initdb.d/10-init-test-db.sql:ro
+    healthcheck:
+      # Migrations and tests wait on this rather than sleeping, so a slow first
+      # start doesn't produce a flaky "connection refused".
+      test: ["CMD-SHELL", "pg_isready -U tutor -d tutor"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # M0.7: the symbolic checker evaluates attacker-influenced expressions, so it
+  # is the most isolated thing in the system. The code-level allowlist in
+  # services/symbolic/parsing.py is the primary defence; these are the limits
+  # that hold if it ever fails.
+  symbolic:
+    build:
+      context: ..
+      dockerfile: ops/symbolic.Dockerfile
+    container_name: tutor-symbolic
+    # An `internal` network, not `network_mode: none`. The service must stay
+    # reachable by the grader that calls it, so full isolation would make it
+    # useless — `internal: true` gives the property that actually matters:
+    # siblings can reach it, and it can reach nothing outbound. A successful
+    # exploit has nowhere to call home.
+    #
+    # Consequence: published ports do not work on an internal network, so this
+    # service has none. For local poking, run it directly:
+    #   .venv/Scripts/python -m uvicorn services.symbolic.app:app --port 8000
+    networks:
+      - symbolic-net
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Caps a runaway evaluation the parser somehow let through: the container
+    # dies instead of the host degrading.
+    mem_limit: 512m
+    pids_limit: 64
+    cpus: 1.0
+    restart: unless-stopped
+
+networks:
+  symbolic-net:
+    # `internal` is what removes the default gateway from the containers on this
+    # network — the mechanism behind "no egress".
+    internal: true
+
+volumes:
+  tutor-pgdata:
