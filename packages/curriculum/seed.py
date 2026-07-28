@@ -99,33 +99,75 @@ def misconception_tags() -> list[m.MisconceptionTag]:
     ]
 
 
+PROBLEM_NAMESPACE = uuid.UUID("44444444-4444-4444-8444-444444444444")
+"""Problem ids are derived from the prompt so re-seeding is genuinely
+idempotent — a second run adds what is missing instead of duplicating what is
+there, and the same problem has the same id in every environment, which is what
+lets a session recorded locally be read against a deployed database."""
+
+# Addition and subtraction within 20, which is the whole span the deterministic
+# rule pre-check can diagnose (packages/fallbacks/rules.py) and the whole span
+# the template library has hints for. A multiplication problem here would parse,
+# fail every rule, diagnose as `unknown`, and serve a generic hint — a bigger
+# problem set that makes the tutor look worse.
+#
+# Both §11.2 representations are exercised: addition with both parts within ten
+# gets a ten-frame, everything else gets a number line.
+_ADDITION: tuple[tuple[int, int], ...] = ((7, 5), (8, 6), (9, 4), (6, 7), (5, 9), (8, 3))
+_SUBTRACTION: tuple[tuple[int, int], ...] = ((13, 8), (15, 7), (12, 9), (16, 8), (14, 6), (11, 4))
+
+
 def problems() -> list[m.Problem]:
-    return [
-        m.Problem(
-            curriculum_node_id=NODE_ADD_WITHIN_20,
-            prompt="What is 7 + 5?",
-            correct_answer="12",
-            answer_type=AnswerType.NUMERIC,
-            grade_band=GradeBand.K_1,
-        ),
-        m.Problem(
-            curriculum_node_id=NODE_SUB_WITHIN_20,
-            prompt="What is 13 - 8?",
-            correct_answer="5",
-            answer_type=AnswerType.NUMERIC,
-            grade_band=GradeBand.K_1,
-        ),
-    ]
+    """The fixture problem set — engineer-written, like everything else here.
+
+    Twelve rather than two because a child, or anyone being shown this, meets
+    the same question repeatedly otherwise: `start_session` picks uniformly at
+    random with no memory of what came before, so two problems means half the
+    sessions repeat the last one. That is a property of the fixture data, not of
+    the sequencing, and P3.4's adaptive sequencer is where real ordering lands.
+    """
+    built: list[m.Problem] = []
+    for node, operator, pairs in (
+        (NODE_ADD_WITHIN_20, "+", _ADDITION),
+        (NODE_SUB_WITHIN_20, "-", _SUBTRACTION),
+    ):
+        for left, right in pairs:
+            prompt = f"What is {left} {operator} {right}?"
+            answer = left + right if operator == "+" else left - right
+            built.append(
+                m.Problem(
+                    id=uuid.uuid5(PROBLEM_NAMESPACE, prompt),
+                    curriculum_node_id=node,
+                    prompt=prompt,
+                    correct_answer=str(answer),
+                    answer_type=AnswerType.NUMERIC,
+                    grade_band=GradeBand.K_1,
+                )
+            )
+    return built
 
 
 def seed(db: DbSession) -> None:
-    """Insert the fixture KB. Idempotent — safe to run against a seeded database."""
-    if db.query(t.CurriculumNodeRow).count():
-        return
+    """Insert the fixture KB. Idempotent, and additive on a second run.
+
+    It previously returned early whenever any curriculum node existed, which
+    made it idempotent but also inert: adding a problem to this file could never
+    reach an already-seeded database, including a deployed one. Every row here
+    has a stable id, so inserting only what is missing gives the same protection
+    against duplicates and lets the fixture set grow.
+    """
+    inserted = 0
     for node in curriculum_nodes():
-        db.add(to_row(node, t.CurriculumNodeRow))
+        if db.get(t.CurriculumNodeRow, node.id) is None:
+            db.add(to_row(node, t.CurriculumNodeRow))
+            inserted += 1
     for tag in misconception_tags():
-        db.add(to_row(tag, t.MisconceptionTagRow))
+        if db.get(t.MisconceptionTagRow, tag.id) is None:
+            db.add(to_row(tag, t.MisconceptionTagRow))
+            inserted += 1
     for problem in problems():
-        db.add(to_row(problem, t.ProblemRow))
-    db.commit()
+        if db.get(t.ProblemRow, problem.id) is None:
+            db.add(to_row(problem, t.ProblemRow))
+            inserted += 1
+    if inserted:
+        db.commit()

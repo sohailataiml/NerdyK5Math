@@ -90,10 +90,11 @@ def test_seed_loads_the_fixture_kb(sqlite_url: str) -> None:
         seed(db)
         assert db.query(t.CurriculumNodeRow).count() == 3
         assert db.query(t.MisconceptionTagRow).count() == 3
-        assert db.query(t.ProblemRow).count() == 2
+        assert db.query(t.ProblemRow).count() == 12
 
         seed(db)  # idempotent
         assert db.query(t.CurriculumNodeRow).count() == 3
+        assert db.query(t.ProblemRow).count() == 12
     engine.dispose()
 
 
