@@ -332,7 +332,9 @@ def _retrieve_agent(state: SwarmState) -> Command[Literal["shadow_agent"]]:
 
     # P1.1: read the rollout cohort once per attempt, here, so every hint level
     # and generation attempt below resolves the same way.
-    rollout = decide(deps.rollout.current(), session_id=state["session_id"]) if deps.rollout else None
+    rollout = (
+        decide(deps.rollout.current(), session_id=state["session_id"]) if deps.rollout else None
+    )
     withheld_by_rollout = rollout is not None and not rollout.serve_generated
 
     return Command(
