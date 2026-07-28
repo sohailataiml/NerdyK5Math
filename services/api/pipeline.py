@@ -51,8 +51,8 @@ from services.orchestrator.hints import DatabaseHintSink
 from services.orchestrator.review import DatabaseReviewSink
 from services.orchestrator.rollout import DatabaseRolloutSource
 from services.orchestrator.shadow import DatabaseShadowSink
-from services.orchestrator.state import PipelineDeps
-from services.orchestrator.symbolic_client import InProcessSymbolicChecker
+from services.orchestrator.state import PipelineDeps, SymbolicChecker
+from services.orchestrator.symbolic_client import HttpSymbolicChecker, InProcessSymbolicChecker
 from services.safety.alerts import ConsoleResponder, DatabaseAlertSink
 
 TransportFactory = Callable[[], Transport]
@@ -82,6 +82,25 @@ def shadow_mode_enabled() -> bool:
     return _truthy("TUTOR_SHADOW_MODE", default=True)
 
 
+def _symbolic_checker() -> SymbolicChecker:
+    """Reach the checker over HTTP when one is deployed, in-process otherwise.
+
+    `InProcessSymbolicChecker` says in its own docstring that it is not for
+    production, and it means it: the symbolic service exists as a separate
+    process because it evaluates attacker-influenced input, and calling it
+    in-process discards the container's no-egress network, read-only
+    filesystem, and memory cap in one line.
+
+    That trade is acceptable for a script or a laptop. It is not acceptable for
+    anything internet-facing, so a deployment sets `SYMBOLIC_URL` and gets the
+    isolated path. The default stays in-process because requiring a second
+    container to run `scripts/demo_session.py` would be a worse default for the
+    people who run this most.
+    """
+    url = os.environ.get("SYMBOLIC_URL", "").strip()
+    return HttpSymbolicChecker(base_url=url) if url else InProcessSymbolicChecker()
+
+
 def build_deps(db: DbSession, session_id: uuid.UUID) -> PipelineDeps:
     """Wire the pipeline for one request."""
     llm: LLMClient | None = None
@@ -93,7 +112,7 @@ def build_deps(db: DbSession, session_id: uuid.UUID) -> PipelineDeps:
         recorder=EventRecorder(DatabaseEventSink(db), session_id),
         prompts=PromptRegistry(),
         llm=llm,
-        symbolic=InProcessSymbolicChecker(),
+        symbolic=_symbolic_checker(),
         db=db,
         shadow_mode=shadow,
         shadow_sink=DatabaseShadowSink(db) if shadow else None,

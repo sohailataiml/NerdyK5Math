@@ -1,0 +1,109 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Four resources, and the shape mirrors ops/docker-compose.yml so a deployment
+# is the same system as a laptop rather than a different one that happens to
+# serve the same URLs.
+#
+#   tutor-db         managed Postgres, with pgvector
+#   tutor-symbolic   private service — SymPy, not reachable from the internet
+#   tutor-api        the FastAPI app
+#   tutor-client     the React student client, static
+#
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo. Then set
+# ANTHROPIC_API_KEY on tutor-api; every other value wires itself.
+#
+# READ BEFORE MAKING THIS PUBLIC. Two properties of this codebase are bounded
+# to a classroom pilot and do not survive contact with the open internet:
+#
+#   1. Authentication is an unsigned header (services/api/auth.py). A principal
+#      id is an unguessable UUID, so it behaves like a bearer token — but it
+#      travels in the query string of the demo URL, which means browser history,
+#      referrers, and screenshots all leak it. Whoever holds a student link can
+#      drive the pipeline; whoever holds the admin link can read every session,
+#      every prompt payload, and the audit trail.
+#   2. There is no rate limiting anywhere, and every wrong answer costs roughly
+#      $0.003 in model calls. An endpoint that is both unauthenticated in
+#      practice and billed is a way to spend someone else's money.
+#
+# For a hiring demo that is a considered risk, not a blocker: rotate the key
+# afterwards, keep the URL unlisted, and watch the Anthropic console. For
+# anything with a real child in it, neither is acceptable.
+
+databases:
+  - name: tutor-db
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+
+services:
+  # The §3.5 checker. `type: pserv` is the whole point — a private service has
+  # no public URL, so the component that evaluates attacker-influenced input is
+  # not addressable from outside the account. It is the nearest thing Render
+  # offers to the no-egress container in ops/docker-compose.yml.
+  - type: pserv
+    name: tutor-symbolic
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./ops/symbolic.Dockerfile
+    dockerContext: .
+    region: oregon
+
+  - type: web
+    name: tutor-api
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    # Migrations run before the server binds, so a deploy that cannot migrate
+    # fails loudly instead of serving a half-migrated schema.
+    #
+    # `scripts.serve` rather than `uvicorn services.api.app:app`, and the
+    # difference is not cosmetic. Import contract 2 forbids anything under
+    # `services` from reaching the model SDK even transitively, because that
+    # rule is what guarantees no call escapes the LLMCall ledger — so the
+    # composition root that picks a provider lives outside `services` and
+    # injects it. Pointing uvicorn straight at the app would boot a server that
+    # runs, passes its health check, and silently serves every stage from its
+    # deterministic fallback with no model behind it.
+    startCommand: >-
+      alembic upgrade head &&
+      python -m scripts.serve --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tutor-db
+          property: connectionString
+      # Render hands out `postgres://`; packages/dburl.py pins it to psycopg 3.
+      - key: SYMBOLIC_URL
+        fromService:
+          name: tutor-symbolic
+          type: pserv
+          property: hostport
+      # Set this yourself in the dashboard. `sync: false` keeps it out of the
+      # repo and out of the blueprint's diff.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Phase 0 default. Generated hints are recorded for teacher rating and
+      # never shown to a child. Flip to 0 only with the P1.1 rollout configured
+      # and the Phase 0 gates argued — `python -m eval.harness.cli phase0`.
+      - key: TUTOR_SHADOW_MODE
+        value: "1"
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+
+  - type: web
+    name: tutor-client
+    runtime: static
+    buildCommand: cd clients/student && npm ci && npm run build
+    staticPublishPath: ./clients/student/dist
+    # The API is proxied rather than called cross-origin, exactly as the Vite
+    # dev server does. That keeps the browser on one origin, so the backend
+    # needs no CORS — and permissive CORS added for a deploy is the kind of
+    # thing that stays.
+    routes:
+      - type: rewrite
+        source: /student/*
+        destination: https://tutor-api.onrender.com/student/*
+      - type: rewrite
+        source: /health
+        destination: https://tutor-api.onrender.com/health

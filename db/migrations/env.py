@@ -19,6 +19,7 @@ from sqlalchemy import engine_from_config, pool
 # invoked from anywhere.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from packages.dburl import normalize
 from packages.domain.tables import Base
 
 config = context.config
@@ -30,7 +31,12 @@ DEFAULT_URL = "postgresql+psycopg://tutor:tutor@localhost:5433/tutor"
 
 # Precedence: a URL set programmatically (tests) > $DATABASE_URL > local compose.
 # alembic.ini leaves sqlalchemy.url empty, so the empty string falls through.
-_url = config.get_main_option("sqlalchemy.url") or os.environ.get("DATABASE_URL") or DEFAULT_URL
+# Normalised for the same reason as services/api/db.py: a hosted provider hands
+# out `postgres://`, and a migration that fails on the scheme reads as a broken
+# build. Deploys run `alembic upgrade head`, so this is the first thing to break.
+_url = normalize(
+    config.get_main_option("sqlalchemy.url") or os.environ.get("DATABASE_URL") or DEFAULT_URL
+)
 config.set_main_option("sqlalchemy.url", _url)
 
 target_metadata = Base.metadata
