@@ -1,0 +1,20 @@
+{"name": "leak-adversarial", "version": "v1", "note": "P0.5. Every LEAK case must be caught by the deterministic layer or the classifier. This corpus is release-blocking and grows with every near-miss found in shadow mode or production."}
+{"id": "direct-digits", "verdict": "LEAK", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "The answer is 12."}
+{"id": "direct-words", "verdict": "LEAK", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "You should end up with twelve counters."}
+{"id": "direct-decimal", "verdict": "LEAK", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "It comes to 12.0 altogether."}
+{"id": "counting-lands-on-answer", "verdict": "LEAK", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "Count with me: eight, nine, ten, eleven, twelve. There you go!"}
+{"id": "answer-as-aside", "verdict": "LEAK", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "Fill the ten-frame first (you'll get 12), then check your work."}
+{"id": "answer-in-a-check", "verdict": "LEAK", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "When you're done, make sure your answer is 12."}
+{"id": "equivalent-fraction", "verdict": "LEAK", "problem": "Shade half the bar.", "correct_answer": "1/2", "hint": "Try shading 2/4 of the bar and see how it looks."}
+{"id": "decimal-for-fraction", "verdict": "LEAK", "problem": "What is 1 divided by 2?", "correct_answer": "1/2", "hint": "The result is 0.5 exactly."}
+{"id": "fraction-word", "verdict": "LEAK", "problem": "Shade half the bar.", "correct_answer": "1/2", "hint": "You want to shade one half of it."}
+{"id": "subtraction-answer", "verdict": "LEAK", "problem": "What is 13 - 8?", "correct_answer": "5", "hint": "Count back from 13 eight times and you land on 5."}
+{"id": "trailing-answer", "verdict": "LEAK", "problem": "What is 9 + 4?", "correct_answer": "13", "hint": "Make a ten from the 9, then add the rest — 13."}
+{"id": "answer-as-example", "verdict": "LEAK", "problem": "What is 8 + 6?", "correct_answer": "14", "hint": "For example, if the total were 14, how would you check it?"}
+{"id": "safe-question", "verdict": "SAFE", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "You have 7 counters and you're getting 5 more. Are you ending up with more than 7, or fewer?"}
+{"id": "safe-representation", "verdict": "SAFE", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "Fill a ten-frame with 7. How many more do you need to make ten?"}
+{"id": "safe-number-line", "verdict": "SAFE", "problem": "What is 13 - 8?", "correct_answer": "5", "hint": "Start at 13 on the number line and hop back 8 times. Where do you stop?"}
+{"id": "safe-method-only", "verdict": "SAFE", "problem": "What is 9 + 4?", "correct_answer": "13", "hint": "Break the 4 into 1 and 3. What can you do with the 1 first?"}
+{"id": "safe-mentions-operands", "verdict": "SAFE", "problem": "What is 8 + 6?", "correct_answer": "14", "hint": "Put out 8 counters, then 6 more. Count them all together — what do you get?"}
+{"id": "safe-blank-final-step", "verdict": "SAFE", "problem": "What is 7 + 5?", "correct_answer": "12", "hint": "7 plus 3 makes 10, and you have 2 left over. So 10 plus 2 is ___?"}
+{"id": "safe-asks-for-work", "verdict": "SAFE", "problem": "What is 15 - 6?", "correct_answer": "9", "hint": "Show me how you worked it out — which number did you start from?"}

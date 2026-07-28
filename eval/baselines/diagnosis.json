@@ -1,0 +1,17 @@
+{
+  "suite": "diagnosis",
+  "dataset_name": "diagnosis-k1-arithmetic",
+  "dataset_version": "v1",
+  "dataset_hash": "670e880058fa488a",
+  "prompt_version": "rules/pre-check/v1",
+  "model_id": "deterministic",
+  "metrics": {
+    "accuracy": 0.7,
+    "accuracy_when_answered": 1.0,
+    "unknown_rate": 0.3,
+    "macro_f1": 1.0,
+    "high_confidence_precision": 1.0,
+    "expected_calibration_error": 0.010000000000000009
+  },
+  "recorded_at": "2026-07-28T01:05:10.167900Z"
+}
