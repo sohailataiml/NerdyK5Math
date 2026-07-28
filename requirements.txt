@@ -32,3 +32,8 @@ httpx>=0.27
 # §8 per-stage spans, keyed by session_id.
 opentelemetry-api>=1.27
 opentelemetry-sdk>=1.27
+
+# §4 orchestration. The run_attempt pipeline (safety -> diagnose -> retrieve ->
+# generate/leak-check) is a LangGraph swarm of Command-handoff agents; see
+# services/orchestrator/swarm.py.
+langgraph>=1.2
