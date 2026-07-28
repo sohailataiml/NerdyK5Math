@@ -5,6 +5,9 @@ A K-5 math tutoring swarm. The student's wrong answer is parsed for its underlyi
 K–5 math tutoring pipeline: diagnose misconception → curriculum retrieval →
 Socratic hint → grade → teacher review.
 
+<img width="2206" height="1123" alt="image" src="https://github.com/user-attachments/assets/5abf4632-74c7-4002-9de0-e26b9a694eb5" />
+
+
 - [Architecture.md](Architecture.md) — system design (current revision: a model call at every stage)
 - [Architecture-deterministic.md](Architecture-deterministic.md) — prior no-LLM revision, kept for comparison
 - [Implementation-Plan.md](Implementation-Plan.md) — build plan, milestones, exit criteria
