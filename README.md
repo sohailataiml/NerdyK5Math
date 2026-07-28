@@ -1,6 +1,8 @@
 # Adaptive Socratic Tutor + Auto-Grader
+A K-5 math tutoring swarm. The student's wrong answer is parsed for its underlying misconception, the curriculum KB is consulted for the canonical remediation, a Socratic hint (not the answer) is generated, the student's follow-up is graded against the rubric, and a per-student summary is queued for the teacher. 
 
-K–12 math tutoring pipeline: diagnose misconception → curriculum retrieval →
+
+K–5 math tutoring pipeline: diagnose misconception → curriculum retrieval →
 Socratic hint → grade → teacher review.
 
 - [Architecture.md](Architecture.md) — system design (current revision: a model call at every stage)
