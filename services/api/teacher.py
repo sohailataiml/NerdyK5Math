@@ -43,6 +43,7 @@ from packages.domain.mapping import to_row
 from packages.domain.models import ReviewVerdict, ShadowRating
 from packages.domain.tables import (
     AttemptRow,
+    GradeResultRow,
     HintLogRow,
     PipelineEventRow,
     ProblemRow,
@@ -87,6 +88,24 @@ class ShadowItem(BaseModel):
     created_at: dt.datetime
 
 
+class AttemptGrade(BaseModel):
+    """One attempt's verdict, as §5's `GradeResult` recorded it.
+
+    `symbolic_agreed` is carried rather than summarised into the score because
+    §3.5's division of labour is the point: where a model claim and the checker
+    disagree the checker wins, and a teacher judging the grade needs to see that
+    the two were consulted, not just the number they produced.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    answer: str
+    score: float
+    method: str
+    confidence: float
+    symbolic_agreed: bool | None
+
+
 class ReviewItemDetail(BaseModel):
     """A queue row with enough context to reach a verdict without leaving it.
 
@@ -111,6 +130,16 @@ class ReviewItemDetail(BaseModel):
     hints_shown: tuple[str, ...]
     misconception_tag: str | None
     ran_degraded: bool
+
+    grades: tuple[AttemptGrade, ...]
+    """The verdict on each attempt, in order.
+
+    Absent until now, which meant a teacher opening a row to reach a verdict on
+    a grade could see the child's answers and the correct answer but not what
+    the system had decided about them — leaving them to redo the arithmetic to
+    find out what they were being asked to confirm.
+    """
+
     created_at: dt.datetime
 
 
@@ -314,6 +343,31 @@ def review_queue(
             None,
         )
 
+        # Joined on attempt so a verdict is attributable to the answer that
+        # earned it. A session-level list would show three scores and leave the
+        # teacher matching them to answers by position.
+        verdicts = {
+            g.attempt_id: g
+            for g in db.execute(
+                select(GradeResultRow).where(
+                    GradeResultRow.attempt_id.in_([a.id for a in attempts] or [uuid.uuid4()])
+                )
+            )
+            .scalars()
+            .all()
+        }
+        grades = tuple(
+            AttemptGrade(
+                answer=a.student_answer,
+                score=verdicts[a.id].score,
+                method=verdicts[a.id].method.value,
+                confidence=verdicts[a.id].confidence,
+                symbolic_agreed=verdicts[a.id].symbolic_agreed,
+            )
+            for a in attempts
+            if a.id in verdicts
+        )
+
         out.append(
             ReviewItemDetail(
                 id=row.id,
@@ -325,6 +379,7 @@ def review_queue(
                 hints_shown=hints,
                 misconception_tag=tag,
                 ran_degraded=any(e.event_type is EventType.FALLBACK_USED for e in events),
+                grades=grades,
                 created_at=row.created_at,
             )
         )

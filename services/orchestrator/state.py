@@ -17,7 +17,7 @@ from typing import Protocol
 from uuid import UUID
 
 from packages.domain.enums import GradeBand, ReviewReason, SafetyCategory
-from packages.domain.models import HintLog, ShadowCandidate
+from packages.domain.models import GradeResult, HintLog, ShadowCandidate
 from packages.llm import LLMClient
 from packages.prompts import PromptRegistry
 from packages.telemetry import EventRecorder
@@ -76,6 +76,20 @@ class HintSink(Protocol):
     """
 
     def record(self, hint: HintLog) -> object: ...
+
+
+class GradeSink(Protocol):
+    """Where §5's `GradeResult` rows go.
+
+    The `graded` event records that a verdict was reached; this records the
+    verdict as a queryable row joined to the attempt it judged. Both are needed
+    and they are not redundant: an event log answers "what happened in this
+    session", and a teacher defending a grade months later needs "what was the
+    verdict on this attempt, by what method, and did the checker agree" without
+    replaying a timeline to find out.
+    """
+
+    def record(self, result: GradeResult) -> object: ...
 
 
 class ReviewSink(Protocol):
@@ -174,6 +188,16 @@ class PipelineDeps:
     hint_sink: HintSink | None = None
     """Where §5's `HintLog` rows go. `None` means the text of what a child read
     is not kept, which is a valid choice for a script and not for a pilot."""
+
+    grade_sink: GradeSink | None = None
+    """Where §5's `GradeResult` rows go.
+
+    `None` means grades exist only as events in the timeline — which is what the
+    pipeline did until now, leaving `grade_result` a table in the schema that
+    nothing outside a demo script ever wrote to. §12's argument for this whole
+    architecture is that a grade can be defended later; a verdict recoverable
+    only by replaying an event stream is a weak form of that.
+    """
 
     review_sink: ReviewSink | None = None
     """Where a finished session goes for a teacher to see (§3.6).

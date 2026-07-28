@@ -234,17 +234,17 @@ def submit_answer(
         operands=({"a": str(parsed.left), "b": str(parsed.right)} if parsed is not None else {}),
     )
 
-    db.add(
-        to_row(
-            Attempt(
-                session_id=session_id,
-                student_answer=request.answer,
-                timestamp=dt.datetime.now(dt.UTC),
-                hint_level_shown=session_row.attempt_count,
-            ),
-            AttemptRow,
-        )
+    # Held rather than discarded: §5's `GradeResult` is keyed by attempt, so the
+    # verdict below can only be made durable if this id survives to the grading
+    # call.
+    attempt = Attempt(
+        session_id=session_id,
+        student_answer=request.answer,
+        timestamp=dt.datetime.now(dt.UTC),
+        hint_level_shown=session_row.attempt_count,
     )
+    db.add(to_row(attempt, AttemptRow))
+    db.flush()
 
     deps = build_deps(db, session_id)
     # Before grading: the child submitted, then it was judged, and the record has
@@ -255,6 +255,7 @@ def submit_answer(
         session_id=session_id,
         problem=problem,
         student_answer=request.answer,
+        attempt_id=attempt.id,
     )
     if graded.score >= 1.0:
         graph.complete_session(deps, graded)

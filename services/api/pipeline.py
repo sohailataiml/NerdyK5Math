@@ -47,6 +47,7 @@ from packages.llm import DatabaseLedger, LLMClient
 from packages.llm.protocol import Transport
 from packages.prompts import PromptRegistry
 from packages.telemetry import DatabaseEventSink, EventRecorder
+from services.orchestrator.grades import DatabaseGradeSink
 from services.orchestrator.hints import DatabaseHintSink
 from services.orchestrator.review import DatabaseReviewSink
 from services.orchestrator.rollout import DatabaseRolloutSource
@@ -126,6 +127,10 @@ def build_deps(db: DbSession, session_id: uuid.UUID) -> PipelineDeps:
         # it said, and a teacher reviewing the session cannot see what the child
         # read.
         hint_sink=DatabaseHintSink(db),
+        # §5's GradeResult. Without it a verdict exists only as an event, and
+        # "what was the grade on this attempt" becomes a timeline scan rather
+        # than a lookup — a weak version of the auditability §12 argues for.
+        grade_sink=DatabaseGradeSink(db),
         # Without this the student page tells a child their teacher will look at
         # their work and nobody is told (§3.6). Phase 0 is 100% review, so in
         # shadow mode every finished session lands in the queue.

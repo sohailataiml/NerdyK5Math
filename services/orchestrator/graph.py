@@ -33,7 +33,7 @@ from packages.domain.enums import (
     ReviewReason,
     SessionState,
 )
-from packages.domain.models import HintLog, ShadowCandidate
+from packages.domain.models import GradeResult, HintLog, ShadowCandidate
 from services.orchestrator.review import reasons_for_review
 from services.orchestrator.rollout import RolloutDecision, decide
 from services.orchestrator.stages import diagnose, generate, grade, leakcheck, retrieve, safety
@@ -469,6 +469,7 @@ def check_answer(
     problem: Problem,
     student_answer: str,
     prior_diagnosis: diagnose.Diagnosis | None = None,
+    attempt_id: UUID | None = None,
 ) -> grade.Grade:
     """Grade one submission (§3.5) **without ending the session**.
 
@@ -477,6 +478,11 @@ def check_answer(
     session continues. Emitting `session_completed` on each of them would put a
     terminal event in the middle of a live session — and `show_replay` would then
     tell a teacher the child finished three times.
+
+    `attempt_id` is what makes the verdict durable. §5's `GradeResult` is keyed
+    by attempt, so a caller that does not supply one gets the event log and
+    nothing else — fine for a script, not for a session a teacher may have to
+    defend.
     """
     deps.recorder.state_changed(frm=SessionState.AWAITING_STUDENT_RETRY, to=SessionState.GRADING)
     result = grade.run(
@@ -488,7 +494,23 @@ def check_answer(
         # which is what makes an immediate "correct" worth a second look.
         diagnosed_gap=bool(prior_diagnosis and prior_diagnosis.tag != UNKNOWN_TAG_LABEL),
     )
+    _record_grade(deps, result.value, attempt_id=attempt_id)
     return result.value
+
+
+def _record_grade(deps: PipelineDeps, graded: grade.Grade, *, attempt_id: UUID | None) -> None:
+    """Persist §5's `GradeResult`, when there is an attempt to attach it to."""
+    if deps.grade_sink is None or attempt_id is None:
+        return
+    deps.grade_sink.record(
+        GradeResult(
+            attempt_id=attempt_id,
+            score=graded.score,
+            confidence=graded.confidence,
+            method=graded.method,
+            symbolic_agreed=graded.symbolic_agreed,
+        )
+    )
 
 
 def complete_session(

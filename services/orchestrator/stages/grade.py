@@ -22,6 +22,26 @@ from packages.domain.enums import GradeMethod, PipelineStage
 from services.orchestrator.state import PipelineDeps, Problem, StageOutcome
 
 
+def _completed(
+    deps: PipelineDeps, *, score: float, symbolic_agreed: bool, needs_review: bool
+) -> None:
+    """Close the stage in the record.
+
+    `recorder.graded` carries the verdict but no `stage`, so without this the
+    grade stage had a `stage_started` and no ending — it read as `unterminated`
+    in the per-stage trace, its duration was unmeasurable, and a grade that
+    completed was indistinguishable from one that died mid-call. Every other
+    stage closes itself; this one silently did not.
+    """
+    deps.recorder.stage_completed(
+        PipelineStage.GRADE,
+        score=score,
+        method=GradeMethod.SYMBOLIC.value,
+        symbolic_agreed=symbolic_agreed,
+        needs_review=needs_review,
+    )
+
+
 @dataclass(frozen=True)
 class Grade:
     score: float
@@ -46,11 +66,14 @@ def run(
     immediately after a diagnosed fundamental gap is suspicious enough to route
     to a teacher rather than be shown to the child as final.
     """
-    deps.recorder.stage_started(PipelineStage.GRADE)
+    deps.recorder.stage_started(
+        PipelineStage.GRADE, answer=student_answer, diagnosed_gap=diagnosed_gap
+    )
 
     if deps.symbolic is None:
         # No checker: grading cannot be done exactly, and guessing at a child's
         # grade is not an acceptable degradation. Escalate.
+        deps.recorder.fallback_used(PipelineStage.GRADE, reason="no symbolic checker available")
         deps.recorder.escalated(reason="no symbolic checker available")
         return StageOutcome(
             value=Grade(
@@ -71,6 +94,7 @@ def run(
         # §3.5's contradiction check.
         deps.recorder.escalated(reason="correct immediately after a diagnosed fundamental gap")
         deps.recorder.graded(score=score, method=GradeMethod.SYMBOLIC.value, review=True)
+        _completed(deps, score=score, symbolic_agreed=True, needs_review=True)
         return StageOutcome(
             value=Grade(
                 score=score,
@@ -83,6 +107,7 @@ def run(
         )
 
     deps.recorder.graded(score=score, method=GradeMethod.SYMBOLIC.value)
+    _completed(deps, score=score, symbolic_agreed=True, needs_review=False)
     return StageOutcome(
         value=Grade(
             score=score,

@@ -46,6 +46,11 @@ REVIEW_PAGE = """
   .meta { font-size: .82rem; opacity: .7; margin-top: .4rem; }
   .problem { font-weight: 600; font-size: 1.1rem; margin: .6rem 0 .5rem; }
   .answers { margin: .3rem 0 .8rem; }
+  .grades { margin: .4rem 0 .8rem; }
+  .grade { font-size: .88rem; padding: .3rem .6rem; border-left: 3px solid;
+           margin-bottom: .25rem; border-radius: 0 5px 5px 0; }
+  .grade.ok { border-left-color: #2f855a; background: rgba(47,133,90,.08); }
+  .grade.no { border-left-color: #b3452f; background: rgba(179,69,47,.07); }
   .answers code { font-size: 1rem; padding: .1rem .4rem; border-radius: 4px;
                   background: rgba(128,128,128,.16); margin-right: .35rem; }
   .hint { border-left: 3px solid rgba(128,128,128,.4); padding: .4rem .8rem;
@@ -100,6 +105,25 @@ async function load() {
   for (const item of items) wire(item.id);
 }
 
+/* The verdict the teacher is being asked to confirm.
+   Shown per attempt rather than per session, because a grade belongs to the
+   answer that earned it — a list of scores beside a list of answers leaves the
+   teacher matching them up by position. */
+function grades(item) {
+  if (!item.grades || !item.grades.length) {
+    return '<div class="meta"><em>no grade was recorded for this session</em></div>';
+  }
+  const rows = item.grades.map((g, i) => {
+    const verdict = g.score >= 1 ? 'marked correct' : 'marked wrong';
+    const checker = g.symbolic_agreed === null ? ''
+      : g.symbolic_agreed ? ' · checker agreed' : ' · CHECKER DISAGREED';
+    return `<div class="grade ${g.score >= 1 ? 'ok' : 'no'}">`
+      + `Attempt ${i + 1}: <code>${esc(g.answer)}</code> — ${verdict}`
+      + `<span class="meta"> by ${esc(g.method)}${checker}</span></div>`;
+  }).join('');
+  return `<div class="grades">${rows}</div>`;
+}
+
 function card(item) {
   const answers = item.answers.map(a => `<code>${esc(a)}</code>`).join('');
   const hints = item.hints_shown.length
@@ -114,6 +138,7 @@ function card(item) {
     <div class="problem">${esc(item.problem)}
       <span class="meta">answer: ${esc(item.correct_answer)}</span></div>
     <div class="answers">The child answered: ${answers || '<em>nothing</em>'}</div>
+    ${grades(item)}
     ${hints}
     <div class="meta">${item.misconception_tag
       ? 'diagnosed: ' + esc(item.misconception_tag) : 'no misconception identified'}</div>
