@@ -84,6 +84,10 @@ RUNS_PAGE = """
   .n-tier  { font-size: 9px; fill: currentColor; opacity: .65; }
   .edge { stroke: rgba(128,128,128,.45); stroke-width: 1.5; fill: none; }
   .edge.taken { stroke: #5b8def; stroke-width: 2.5; }
+  .purpose { font-size: .85rem; line-height: 1.5; padding: .5rem .75rem;
+             border-left: 3px solid rgba(128,128,128,.45); margin-bottom: .8rem;
+             opacity: .85; }
+  svg.canvas g { cursor: help; }
   .active-stage { margin-top: .9rem; border: 1px solid rgba(217,139,58,.5);
                   border-left: 4px solid #d98b3a; border-radius: 10px;
                   background: rgba(217,139,58,.05); }
@@ -232,10 +236,11 @@ function canvas(topology, visitedNodes, currentNode) {
     const isVisited = visitedNodes.has(n.id);
     const cls = isCurrent ? 'current' : isVisited ? 'visited' : 'skipped';
     parts.push(`
+      <g><title>${esc(n.purpose)}</title>
       <rect class="n-box ${cls}" x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="8"/>
       <text class="n-label" x="${p.x + 10}" y="${p.y + 20}">${esc(n.id.replace('_agent',''))}</text>
       <text class="n-tier" x="${p.x + 10}" y="${p.y + 35}">
-        ${esc(n.tier || 'deterministic')}</text>`);
+        ${esc(n.tier || 'deterministic')}</text></g>`);
   }
   return `<svg class="canvas" viewBox="0 0 ${width} ${height}"
             preserveAspectRatio="xMinYMin meet">${parts.join('')}</svg>`;
@@ -292,6 +297,7 @@ function renderTour() {
         <span class="step">${cursor + 1} / ${stages.length}</span>
       </div>
       <div class="narration">${narrate(current)}</div>
+      ${purposeOf(currentNode)}
       ${canvas(TOPOLOGY, seen, currentNode)}
       ${current ? activeStage(current) : ''}
     </div>`;
@@ -305,6 +311,18 @@ function renderTour() {
    to the reader keeps the graph and the payload on screen together, which is
    the comparison the walkthrough exists to make. The full list stays below,
    unscrolled, for anyone who wants to browse rather than be walked. */
+/* What the lit node is *for*, as opposed to what it just did. The narration
+   above says "leak_check called haiku, 1200ms, $0.0006"; that is the run. This
+   is the reason the node exists at all, which is the part a reader meeting the
+   pipeline for the first time actually needs. Hover any box for the same text. */
+function purposeOf(nodeId) {
+  if (!nodeId || !TOPOLOGY) return '';
+  const node = TOPOLOGY.find(n => n.id === nodeId);
+  if (!node) return '';
+  return `<div class="purpose"><strong>${esc(node.id.replace('_agent',''))}</strong> — `
+       + `${esc(node.purpose)}</div>`;
+}
+
 function activeStage(run) {
   const badge = run.used_model
     ? `<span class="tag">${esc(run.model_id)}</span>`

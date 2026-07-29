@@ -68,6 +68,19 @@ class TestDerivedFromTheCode:
         assert "record_hint_agent" not in generate_node.handoffs
         assert "leakcheck_agent" in generate_node.handoffs
 
+    def test_every_node_explains_itself(self) -> None:
+        """The canvas shows a name and a tier; neither says what a node is for.
+        Requiring a sentence per node means adding one forces an explanation of
+        why it exists, rather than leaving the next reader to infer it."""
+        for node in swarm.topology():
+            assert node.purpose, f"{node.id} has no purpose"
+            assert len(node.purpose) > 40, f"{node.id}'s purpose is not a sentence"
+
+    def test_purposes_cover_exactly_the_roster(self) -> None:
+        """A stale entry is as bad as a missing one — it would describe a node
+        that no longer exists."""
+        assert set(swarm.NODE_PURPOSE) == set(swarm.AGENTS)
+
     def test_stage_mapping_covers_every_node(self) -> None:
         """A node missing from NODE_STAGE would raise when the topology is
         built, which is a worse failure than a test."""
@@ -131,6 +144,10 @@ class TestTheEndpoint:
         # The bookkeeping nodes have no stage, so no tier to claim.
         assert by_id["record_hint_agent"]["stage"] is None
         assert by_id["record_hint_agent"]["tier"] is None
+        # The bookkeeping nodes still explain themselves — they are the two a
+        # reader is most likely to wonder about.
+        assert by_id["record_hint_agent"]["purpose"]
+        assert by_id["escalate_agent"]["purpose"]
 
     def test_a_teacher_cannot_read_it(self, client: TestClient, api_db: DbSession) -> None:
         """The topology is not sensitive, but it lives behind the same admin

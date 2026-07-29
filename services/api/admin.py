@@ -268,6 +268,10 @@ class SwarmNodeView(BaseModel):
 
     entry: bool
     handoffs: list[str]
+    purpose: str
+    """One sentence on what this node is for, from `swarm.NODE_PURPOSE`. The
+    canvas is otherwise a picture of names, and a name is not an explanation."""
+
     tier: str | None
     """Which model tier this node's stage is configured for, or `None` where the
     stage has no model path. Read from `packages.llm.config` rather than
@@ -291,6 +295,7 @@ def read_topology(scope: Scope = Depends(current_scope)) -> list[SwarmNodeView]:
             stage=node.stage.value if node.stage else None,
             entry=node.entry,
             handoffs=list(node.handoffs),
+            purpose=node.purpose,
             tier=_tier_for(node.stage),
         )
         for node in swarm.topology()

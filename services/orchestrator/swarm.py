@@ -595,6 +595,67 @@ NODE_STAGE: dict[str, PipelineStage | None] = {
 }
 
 
+NODE_PURPOSE: dict[str, str] = {
+    "safety_agent": (
+        "Reads the child's own words for signs of distress, before any teaching "
+        "happens — whether the maths was right has no bearing on whether a child "
+        "needs an adult. A flag goes sideways to a person and never changes what "
+        "the child sees, because a machine that visibly stops after a child types "
+        "something frightening teaches them not to type it again."
+    ),
+    "diagnose_agent": (
+        "Works out *which* mistake was made, not just that the answer was wrong — "
+        "the whole pipeline downstream is aimed at a named misconception. A free "
+        "arithmetic rule check runs first and the model is asked only when no rule "
+        "fires; when neither is confident the answer is `unknown`, because a "
+        "confident wrong diagnosis sends a child a hint for a problem they do not "
+        "have."
+    ),
+    "retrieve_agent": (
+        "Looks up the teacher-approved way to reteach that specific mistake. "
+        "Generation is never allowed to invent a teaching strategy, so an empty "
+        "result blocks it — this is the stage that stops the model making up "
+        "curriculum."
+    ),
+    "shadow_agent": (
+        "Phase 0 only. Runs the model and records its hint for a teacher to rate "
+        "without showing it to anyone, so the system can be measured on real "
+        "children's work before a word of it reaches a child. Off outside shadow "
+        "mode, when it does nothing at all."
+    ),
+    "generate_agent": (
+        "Phrases the retrieved strategy as a Socratic hint for this child, this "
+        "problem, this attempt. It chooses the words, never the teaching move. "
+        "After two rejected attempts it stops asking the model and renders a "
+        "pre-approved template instead."
+    ),
+    "leakcheck_agent": (
+        "Blocks any hint that gives the answer away — a normalised match first, "
+        "then a model asked to judge. Nothing reaches a child without passing "
+        "here, templates included, and it fails closed: no hint is better than a "
+        "leaked one, because a leak cannot be taken back once a child has read it."
+    ),
+    "record_hint_agent": (
+        "Writes down what the child was actually shown, so a teacher reviewing the "
+        "session months later reads the same words the child did. It refuses to "
+        "store anything the leak check did not clear."
+    ),
+    "escalate_agent": (
+        "Ends the attempt with no hint and sends the session to a teacher. "
+        "Deliberately not a failure state for the child: they are told an adult "
+        "will look at it with them, and that sentence is only written when a "
+        "queue row was really created."
+    ),
+}
+"""One plain sentence per node, for the canvas and for anyone reading the graph
+for the first time.
+
+Prose, so unlike the edges it cannot be derived — but it lives beside the code it
+describes rather than in a diagram somewhere else, and a test asserts every node
+has one, so adding a node forces an explanation of why it exists.
+"""
+
+
 def handoffs(node: str) -> tuple[str, ...]:
     """Where `node` may hand control, read from its own return annotation.
 
@@ -619,6 +680,7 @@ class SwarmNode:
     stage: PipelineStage | None
     entry: bool
     handoffs: tuple[str, ...]
+    purpose: str
 
 
 def topology() -> tuple[SwarmNode, ...]:
@@ -629,6 +691,7 @@ def topology() -> tuple[SwarmNode, ...]:
             stage=NODE_STAGE[node],
             entry=node == ENTRY_NODE,
             handoffs=handoffs(node),
+            purpose=NODE_PURPOSE[node],
         )
         for node in AGENTS
     )
