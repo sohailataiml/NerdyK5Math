@@ -3,9 +3,37 @@ A K-5 math tutoring swarm. The student's wrong answer is parsed for its underlyi
 
 
 K–5 math tutoring pipeline: diagnose misconception → curriculum retrieval →
-Socratic hint → grade → teacher review.
+Socratic hint → grade → teacher review
+
+Please look at slides below for a quick understanding of the architecture:
 
 <img width="2206" height="1123" alt="image" src="https://github.com/user-attachments/assets/5abf4632-74c7-4002-9de0-e26b9a694eb5" />
+
+<img width="2232" height="1249" alt="image" src="https://github.com/user-attachments/assets/92145c98-434d-4464-8637-18ef8b2fbf6a" />
+
+<img width="2202" height="1227" alt="image" src="https://github.com/user-attachments/assets/ec81ea57-bf79-4bce-85a9-8c50864b5dd4" />
+
+<img width="2263" height="1259" alt="image" src="https://github.com/user-attachments/assets/6593ee5a-c272-4025-8e4c-d4a4b59ea3c1" />
+
+<img width="2230" height="1256" alt="image" src="https://github.com/user-attachments/assets/cb108105-0d1a-495f-9aa2-60fbb90711bc" />
+
+<img width="2264" height="1239" alt="image" src="https://github.com/user-attachments/assets/e051d642-179c-4f68-a97f-def5d0108783" />
+
+<img width="2266" height="1260" alt="image" src="https://github.com/user-attachments/assets/830f9543-a724-4640-91dc-9c6ab19aa581" />
+
+<img width="2264" height="1246" alt="image" src="https://github.com/user-attachments/assets/98d79c3a-c049-492e-b656-f7f753eb0ebb" />
+
+<img width="2230" height="1252" alt="image" src="https://github.com/user-attachments/assets/8405c72e-8d59-41dd-8ec0-6c36c219fab1" />
+
+<img width="2224" height="1245" alt="image" src="https://github.com/user-attachments/assets/f909e5f5-d768-470b-881d-684ce655b011" />
+
+
+
+
+
+
+
+
 
 
 - [Architecture.md](Architecture.md) — system design (current revision: a model call at every stage)
