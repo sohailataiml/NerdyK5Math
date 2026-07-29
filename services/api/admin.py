@@ -33,11 +33,14 @@ from packages.auth import (
     can_read_audit_trail,
     require,
 )
+from packages.domain.enums import PipelineStage
 from packages.domain.tables import SessionRow
+from packages.llm.config import STAGE_CONFIG
 from packages.telemetry import trace as build_trace
 from services.api.auth import current_scope
 from services.api.db import get_db
 from services.orchestrator import rollout as rollout_policy
+from services.orchestrator import swarm
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -253,6 +256,52 @@ class RunSummaryView(BaseModel):
     state: str
     attempt_count: int
     started_at: dt.datetime
+
+
+class SwarmNodeView(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    stage: str | None
+    """`None` for the two bookkeeping nodes at the graph's terminal edges. It is
+    what tells a viewer not to hunt for a stage run that never existed."""
+
+    entry: bool
+    handoffs: list[str]
+    tier: str | None
+    """Which model tier this node's stage is configured for, or `None` where the
+    stage has no model path. Read from `packages.llm.config` rather than
+    restated, so the picture cannot claim a tier the client would not use."""
+
+
+@router.get("/topology", response_model=list[SwarmNodeView])
+def read_topology(scope: Scope = Depends(current_scope)) -> list[SwarmNodeView]:
+    """The swarm's shape, derived from the code that runs it.
+
+    Nodes and edges come from each agent's `Command[Literal[...]]` return
+    annotation — the same annotation LangGraph validates the graph against — so
+    a drawing of this pipeline cannot disagree with the pipeline. A hand-drawn
+    diagram is accurate on the day it is drawn; this one is accurate or the
+    graph is broken.
+    """
+    _authorize(scope)
+    return [
+        SwarmNodeView(
+            id=node.id,
+            stage=node.stage.value if node.stage else None,
+            entry=node.entry,
+            handoffs=list(node.handoffs),
+            tier=_tier_for(node.stage),
+        )
+        for node in swarm.topology()
+    ]
+
+
+def _tier_for(stage: PipelineStage | None) -> str | None:
+    if stage is None:
+        return None
+    config = STAGE_CONFIG.get(stage)
+    return config.tier.value if config else None
 
 
 @router.get("/runs", response_model=list[RunSummaryView])

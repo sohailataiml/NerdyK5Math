@@ -61,6 +61,29 @@ RUNS_PAGE = """
   pre { margin: 0; padding: .6rem .7rem; border-radius: 8px; overflow-x: auto;
         background: rgba(128,128,128,.12); font-size: .76rem; line-height: 1.45;
         max-height: 22rem; }
+  /* --- the guided tour ------------------------------------------------- */
+  .tour { border: 1px solid rgba(128,128,128,.3); border-radius: 10px;
+          padding: .9rem 1rem 1rem; margin-bottom: 1rem; }
+  .tourbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+             margin-bottom: .75rem; }
+  .tourbar button { font: inherit; cursor: pointer; border-radius: 7px;
+                    border: 1px solid rgba(128,128,128,.5); background: transparent;
+                    color: inherit; padding: .3rem .8rem; }
+  .tourbar button:hover:not(:disabled) { border-color: currentColor; }
+  .tourbar button:disabled { opacity: .4; cursor: default; }
+  .step { font-size: .82rem; opacity: .75; margin-left: auto; }
+  .narration { font-size: .9rem; padding: .5rem .75rem; border-left: 3px solid #5b8def;
+               background: rgba(91,141,239,.07); border-radius: 0 6px 6px 0;
+               margin-bottom: .8rem; min-height: 2.6rem; }
+  svg.canvas { width: 100%; height: auto; display: block; }
+  .n-box { fill: rgba(128,128,128,.10); stroke: rgba(128,128,128,.45); stroke-width: 1.5; }
+  .n-box.visited { stroke: #5b8def; fill: rgba(91,141,239,.12); }
+  .n-box.current { stroke: #d98b3a; stroke-width: 3; fill: rgba(217,139,58,.18); }
+  .n-box.skipped { stroke-dasharray: 4 3; opacity: .55; }
+  .n-label { font-size: 11px; font-weight: 600; fill: currentColor; }
+  .n-tier  { font-size: 9px; fill: currentColor; opacity: .65; }
+  .edge { stroke: rgba(128,128,128,.45); stroke-width: 1.5; fill: none; }
+  .edge.taken { stroke: #5b8def; stroke-width: 2.5; }
   .timeline { margin-top: 1.5rem; }
   .timeline li { font-size: .8rem; opacity: .85; margin-bottom: .15rem; }
   .warn { color: #b3452f; font-weight: 600; }
@@ -107,6 +130,173 @@ async function loadRuns() {
     </button>`).join('');
 }
 
+/* ---------------------------------------------------------------------------
+   The guided tour.
+
+   The canvas is the swarm's real topology: /admin/topology derives nodes and
+   edges from each agent's Command[Literal[...]] return annotation, the same one
+   LangGraph validates against, so this drawing cannot disagree with the graph
+   that ran. A hand-drawn diagram is accurate the day it is drawn.
+
+   The walkthrough is driven by a real session rather than a script. That is the
+   point: a scripted tour shows the happy path, and this shows what actually
+   happened — including the stage that fell back, the diagnosis that came back
+   `unknown`, and the template served because shadow mode is on.
+   --------------------------------------------------------------------------- */
+let TOPOLOGY = null;
+let TOUR = null;   // { stages, cursor }
+
+async function loadTopology() {
+  const res = await fetch('/admin/topology', {headers});
+  if (res.ok) TOPOLOGY = await res.json();
+}
+
+/* Left-to-right by handoff distance from the entry node, so the picture follows
+   the code's order rather than a hand-placed guess at it. */
+function layout(nodes) {
+  const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+  const col = {};
+  const entry = (nodes.find(n => n.entry) || nodes[0]).id;
+  // Breadth-first, and each node keeps the FIRST depth it is reached at.
+  // This graph has a cycle by design -- leakcheck hands back to generate for
+  // the §3.3 retry -- so a longest-path assignment never terminates: every trip
+  // round the loop is a larger depth, so a "keep the deeper one" rule re-queues
+  // forever. Shortest distance is well defined on a cyclic graph, and it puts
+  // the retry edge where it belongs: an arrow pointing back upstream.
+  const queue = [[entry, 0]];
+  while (queue.length) {
+    const [id, depth] = queue.shift();
+    if (col[id] !== undefined) continue;
+    col[id] = depth;
+    for (const next of (byId[id]?.handoffs || [])) {
+      if (byId[next] && col[next] === undefined) queue.push([next, depth + 1]);
+    }
+  }
+  const columns = {};
+  for (const n of nodes) {
+    const c = col[n.id] ?? 0;
+    (columns[c] = columns[c] || []).push(n);
+  }
+  const W = 132, H = 46, GAPX = 40, GAPY = 18;
+  const pos = {};
+  for (const [c, group] of Object.entries(columns)) {
+    group.forEach((n, i) => {
+      pos[n.id] = {x: Number(c) * (W + GAPX) + 10, y: i * (H + GAPY) + 14, w: W, h: H};
+    });
+  }
+  const width = (Math.max(...Object.values(col)) + 1) * (W + GAPX) + 10;
+  const height = Math.max(...Object.values(columns).map(g => g.length)) * (H + GAPY) + 20;
+  return {pos, width, height};
+}
+
+function canvas(topology, visitedStages, currentStage) {
+  const {pos, width, height} = layout(topology);
+  const parts = [];
+  for (const n of topology) {
+    for (const target of n.handoffs) {
+      const a = pos[n.id], b = pos[target];
+      if (!a || !b) continue;   // __end__ has no box; the run simply stops
+      const targetStage = topology.find(t => t.id === target)?.stage;
+      const taken = visitedStages.has(n.stage) && visitedStages.has(targetStage);
+      const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
+      const mid = (x1 + x2) / 2;
+      parts.push(`<path class="edge${taken ? ' taken' : ''}"
+        d="M${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}"/>`);
+    }
+  }
+  for (const n of topology) {
+    const p = pos[n.id];
+    if (!p) continue;
+    const isCurrent = n.stage && n.stage === currentStage;
+    const isVisited = n.stage && visitedStages.has(n.stage);
+    const cls = isCurrent ? 'current' : isVisited ? 'visited' : 'skipped';
+    parts.push(`
+      <rect class="n-box ${cls}" x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="8"/>
+      <text class="n-label" x="${p.x + 10}" y="${p.y + 20}">${esc(n.id.replace('_agent',''))}</text>
+      <text class="n-tier" x="${p.x + 10}" y="${p.y + 35}">
+        ${esc(n.tier || 'deterministic')}</text>`);
+  }
+  return `<svg class="canvas" viewBox="0 0 ${width} ${height}"
+            preserveAspectRatio="xMinYMin meet">${parts.join('')}</svg>`;
+}
+
+function narrate(run) {
+  if (!run) return 'Press Play, or Step, to walk the pipeline as it actually ran.';
+  const how = run.used_model
+    ? `called ${esc(run.model_id)} (${esc(run.prompt_version)}) — `
+      + `${run.tokens_in}→${run.tokens_out} tok, ${run.latency_ms}ms, `
+      + `$${run.cost_usd.toFixed(6)}`
+    : 'took its deterministic path — no model call, no cost';
+  const outcome = run.outcome === 'fallback'
+    ? ' It <strong>fell back</strong>: ' + esc(JSON.stringify(run.outputs.reason ?? run.outputs))
+    : run.outcome === 'failed' ? ' It <strong>failed</strong>.'
+    : run.outcome === 'unterminated' ? ' It never recorded an ending.' : '';
+  const pass = run.ordinal > 1 ? ' (pass ' + run.ordinal + ')' : '';
+  return `<strong>${esc(run.stage)}</strong>${pass} ${how}.${outcome}`;
+}
+
+function renderTour() {
+  if (!TOPOLOGY || !TOUR) return '';
+  const {stages, cursor} = TOUR;
+  if (!stages.length) {
+    // Common, and not an error: a child opened a problem and never answered.
+    // The phase-0 report counts these separately for the same reason — they are
+    // not sessions that went wrong, they are sessions that never started.
+    return `<div class="tour">
+      <div class="narration">This session recorded no stage runs — the problem
+      was opened and never answered, so the pipeline never ran. Pick a run with
+      at least one attempt to walk through.</div>
+      ${canvas(TOPOLOGY, new Set(), null)}
+    </div>`;
+  }
+  const seen = new Set(stages.slice(0, Math.max(cursor, 0) + 1).map(s => s.stage));
+  const current = cursor >= 0 ? stages[cursor] : null;
+  return `
+    <div class="tour">
+      <div class="tourbar">
+        <button id="t-prev" ${cursor <= 0 ? 'disabled' : ''}>&larr; Back</button>
+        <button id="t-next" ${cursor >= stages.length - 1 ? 'disabled' : ''}>Step &rarr;</button>
+        <button id="t-play">Play</button>
+        <button id="t-reset">Reset</button>
+        <span class="step">${cursor + 1} / ${stages.length}</span>
+      </div>
+      <div class="narration">${narrate(current)}</div>
+      ${canvas(TOPOLOGY, seen, current ? current.stage : null)}
+    </div>`;
+}
+
+function wireTour() {
+  const redraw = () => {
+    const host = document.getElementById('tour-host');
+    if (host) host.innerHTML = renderTour();
+    wireTour();
+    if (TOUR && TOUR.cursor >= 0) {
+      const card = document.getElementById('stage-' + TOUR.cursor);
+      if (card) card.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+      document.querySelectorAll('.stage').forEach((el, i) =>
+        el.style.outline = i === TOUR.cursor ? '2px solid #d98b3a' : 'none');
+    }
+  };
+  const prev = document.getElementById('t-prev');
+  const next = document.getElementById('t-next');
+  const play = document.getElementById('t-play');
+  const reset = document.getElementById('t-reset');
+  if (prev) prev.onclick = () => { TOUR.cursor = Math.max(0, TOUR.cursor - 1); redraw(); };
+  if (next) next.onclick = () => {
+    TOUR.cursor = Math.min(TOUR.stages.length - 1, TOUR.cursor + 1); redraw();
+  };
+  if (reset) reset.onclick = () => { TOUR.cursor = -1; redraw(); };
+  if (play) play.onclick = () => {
+    TOUR.cursor = -1; redraw();
+    const tick = () => {
+      if (!TOUR || TOUR.cursor >= TOUR.stages.length - 1) return;
+      TOUR.cursor += 1; redraw();
+      setTimeout(tick, 900);
+    };
+    setTimeout(tick, 400);
+  };
+}
+
 /* Rendered as sent and received, not prettified into something friendlier.
    The point of this panel is to show what actually crossed the boundary. */
 function payload(obj) {
@@ -115,7 +305,7 @@ function payload(obj) {
   return '<pre>' + esc(JSON.stringify(obj, null, 2)) + '</pre>';
 }
 
-function stageCard(s) {
+function stageCard(s, index) {
   const cls = s.outcome === 'failed' ? 'failed'
             : s.outcome === 'fallback' ? 'fallback'
             : s.used_model ? 'model' : 'deterministic';
@@ -126,7 +316,7 @@ function stageCard(s) {
     ? `${s.tokens_in}→${s.tokens_out} tok · ${s.latency_ms}ms · $${s.cost_usd.toFixed(6)}`
     : (s.duration_ms !== null ? `${s.duration_ms}ms` : '');
   return `
-    <article class="stage ${cls}">
+    <article class="stage ${cls}" id="stage-${index}">
       <header onclick="this.parentElement.querySelector('.io').classList.toggle('hidden')">
         <h3>${esc(s.stage)}${s.ordinal > 1 ? ' #' + s.ordinal : ''}</h3>
         <span class="tag">${esc(s.outcome)}</span>
@@ -159,6 +349,9 @@ async function showRun(id) {
     : '';
   const degraded = t.degraded_stages.length
     ? t.degraded_stages.join(', ') : 'none';
+  // A fresh walkthrough per run; the cursor starts before the first step so the
+  // canvas opens showing the topology rather than a stage already selected.
+  TOUR = {stages: t.stages, cursor: -1};
 
   box.innerHTML = `
     <h1>Run <code>${esc(id.slice(0, 8))}</code></h1>
@@ -171,6 +364,7 @@ async function showRun(id) {
       <div><span class="k">degraded</span><span class="v">${esc(degraded)}</span></div>
       <div><span class="k">cost</span><span class="v">$${t.total_cost_usd.toFixed(6)}</span></div>
     </div>
+    <div id="tour-host"></div>
     ${t.stages.map(stageCard).join('')}
     <div class="timeline">
       <h4>Session events (no stage)</h4>
@@ -178,8 +372,11 @@ async function showRun(id) {
         `<li><code>${e.sequence}</code> ${esc(e.event_type)}
          ${Object.keys(e.detail).length ? esc(JSON.stringify(e.detail)) : ''}</li>`).join('')}</ul>
     </div>`;
+
+  document.getElementById('tour-host').innerHTML = renderTour();
+  wireTour();
 }
 
-loadRuns();
+loadTopology().then(loadRuns);
 </script>
 """

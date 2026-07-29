@@ -42,8 +42,10 @@ Two rules this graph enforces that no single node can:
 from __future__ import annotations
 
 import datetime as dt
+import typing
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 from langgraph.graph import END, START, StateGraph
@@ -558,19 +560,92 @@ def _escalate_agent(state: SwarmState) -> Command[Literal[END]]:  # type: ignore
     return Command(goto=END, update={"result": result})
 
 
+ENTRY_NODE = "safety_agent"
+
+AGENTS: dict[str, Callable[[SwarmState], Any]] = {
+    "safety_agent": _safety_agent,
+    "diagnose_agent": _diagnose_agent,
+    "retrieve_agent": _retrieve_agent,
+    "shadow_agent": _shadow_agent,
+    "generate_agent": _generate_agent,
+    "leakcheck_agent": _leakcheck_agent,
+    "record_hint_agent": _record_hint_agent,
+    "escalate_agent": _escalate_agent,
+}
+"""The swarm's nodes, in the order a run normally visits them.
+
+A single mapping rather than a list of `add_node` calls, because `_build_swarm`
+is no longer the only thing that needs to know the roster: `topology()` derives
+the drawable graph from it, and a picture built from a second, hand-maintained
+list is a picture that drifts from the code the first time a node is added.
+"""
+
+NODE_STAGE: dict[str, PipelineStage | None] = {
+    "safety_agent": PipelineStage.SAFETY_SCREEN,
+    "diagnose_agent": PipelineStage.DIAGNOSE,
+    "retrieve_agent": PipelineStage.RERANK,
+    "shadow_agent": PipelineStage.GENERATE_HINT,
+    "generate_agent": PipelineStage.GENERATE_HINT,
+    "leakcheck_agent": PipelineStage.LEAK_CHECK,
+    # These two do bookkeeping at the graph's terminal edges — they write the
+    # record and hand back a result. `None` is what tells a viewer not to look
+    # for a stage run that was never going to exist.
+    "record_hint_agent": None,
+    "escalate_agent": None,
+}
+
+
+def handoffs(node: str) -> tuple[str, ...]:
+    """Where `node` may hand control, read from its own return annotation.
+
+    `Command[Literal["a", "b"]]` is not documentation — LangGraph reads the same
+    annotation to validate the graph, so deriving the edges from it means a
+    drawing of this swarm cannot disagree with the swarm. Adding a handoff
+    target without updating the annotation is already a bug; this makes it a
+    visible one.
+    """
+    annotation = typing.get_type_hints(AGENTS[node])["return"]
+    command_args = typing.get_args(annotation)
+    if not command_args:
+        return ()
+    return tuple(str(target) for target in typing.get_args(command_args[0]))
+
+
+@dataclass(frozen=True)
+class SwarmNode:
+    """One node of the drawable graph."""
+
+    id: str
+    stage: PipelineStage | None
+    entry: bool
+    handoffs: tuple[str, ...]
+
+
+def topology() -> tuple[SwarmNode, ...]:
+    """The swarm as drawable nodes and edges, derived rather than declared."""
+    return tuple(
+        SwarmNode(
+            id=node,
+            stage=NODE_STAGE[node],
+            entry=node == ENTRY_NODE,
+            handoffs=handoffs(node),
+        )
+        for node in AGENTS
+    )
+
+
 def _build_swarm() -> CompiledStateGraph[SwarmState, None, SwarmState, SwarmState]:
     builder = StateGraph(SwarmState)
-    builder.add_node("safety_agent", _safety_agent)
-    builder.add_node("diagnose_agent", _diagnose_agent)
-    builder.add_node("retrieve_agent", _retrieve_agent)
-    builder.add_node("shadow_agent", _shadow_agent)
-    builder.add_node("generate_agent", _generate_agent)
-    builder.add_node("leakcheck_agent", _leakcheck_agent)
-    builder.add_node("record_hint_agent", _record_hint_agent)
-    builder.add_node("escalate_agent", _escalate_agent)
+    for name, agent in AGENTS.items():
+        # `add_node` is heavily overloaded on the action's shape, and mypy cannot
+        # resolve those overloads against a callable read from a dict rather than
+        # named directly. Registering from the roster is worth one narrow ignore:
+        # the alternative is a second, hand-maintained list of nodes that drifts
+        # from this one the first time a node is added.
+        builder.add_node(name, agent)  # type: ignore[call-overload]
     # The only static edge: everything past the entry point is a handoff a node
     # decides for itself (see the module docstring).
-    builder.add_edge(START, "safety_agent")
+    builder.add_edge(START, ENTRY_NODE)
     return builder.compile()
 
 
