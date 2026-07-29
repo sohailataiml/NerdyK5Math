@@ -189,15 +189,28 @@ function layout(nodes) {
   return {pos, width, height};
 }
 
-function canvas(topology, visitedStages, currentStage) {
+/* Which NODE produced this stage run.
+   Stage is not enough: shadow_agent and generate_agent both report
+   `generate_hint`, so keying the canvas on stage lit the shadow node whenever
+   any generation ran — including with shadow mode off, when shadow_agent is a
+   pass-through that does nothing. The shadow pass marks its own completion with
+   `shadow: true`, which is the only thing that tells the two apart. */
+function nodeIdFor(run, topology) {
+  if (run.stage === 'generate_hint') {
+    return run.outputs && run.outputs.shadow === true ? 'shadow_agent' : 'generate_agent';
+  }
+  const match = topology.find(n => n.stage === run.stage);
+  return match ? match.id : null;
+}
+
+function canvas(topology, visitedNodes, currentNode) {
   const {pos, width, height} = layout(topology);
   const parts = [];
   for (const n of topology) {
     for (const target of n.handoffs) {
       const a = pos[n.id], b = pos[target];
       if (!a || !b) continue;   // __end__ has no box; the run simply stops
-      const targetStage = topology.find(t => t.id === target)?.stage;
-      const taken = visitedStages.has(n.stage) && visitedStages.has(targetStage);
+      const taken = visitedNodes.has(n.id) && visitedNodes.has(target);
       const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
       const mid = (x1 + x2) / 2;
       parts.push(`<path class="edge${taken ? ' taken' : ''}"
@@ -207,8 +220,8 @@ function canvas(topology, visitedStages, currentStage) {
   for (const n of topology) {
     const p = pos[n.id];
     if (!p) continue;
-    const isCurrent = n.stage && n.stage === currentStage;
-    const isVisited = n.stage && visitedStages.has(n.stage);
+    const isCurrent = n.id === currentNode;
+    const isVisited = visitedNodes.has(n.id);
     const cls = isCurrent ? 'current' : isVisited ? 'visited' : 'skipped';
     parts.push(`
       <rect class="n-box ${cls}" x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="8"/>
@@ -249,8 +262,18 @@ function renderTour() {
       ${canvas(TOPOLOGY, new Set(), null)}
     </div>`;
   }
-  const seen = new Set(stages.slice(0, Math.max(cursor, 0) + 1).map(s => s.stage));
+  // Node ids, not stages — see nodeIdFor. `cursor < 0` means nothing has been
+  // stepped yet, so nothing is lit.
+  const seen = new Set(
+    (cursor < 0 ? [] : stages.slice(0, cursor + 1))
+      .map(s => nodeIdFor(s, TOPOLOGY)).filter(Boolean));
   const current = cursor >= 0 ? stages[cursor] : null;
+  const currentNode = current ? nodeIdFor(current, TOPOLOGY) : null;
+  // The terminal nodes never produce a stage run of their own, so light them
+  // from the outcome the run actually reached rather than leaving both dashed.
+  if (cursor === stages.length - 1) {
+    seen.add(TOUR.escalated ? 'escalate_agent' : 'record_hint_agent');
+  }
   return `
     <div class="tour">
       <div class="tourbar">
@@ -261,7 +284,7 @@ function renderTour() {
         <span class="step">${cursor + 1} / ${stages.length}</span>
       </div>
       <div class="narration">${narrate(current)}</div>
-      ${canvas(TOPOLOGY, seen, current ? current.stage : null)}
+      ${canvas(TOPOLOGY, seen, currentNode)}
     </div>`;
 }
 
@@ -351,7 +374,8 @@ async function showRun(id) {
     ? t.degraded_stages.join(', ') : 'none';
   // A fresh walkthrough per run; the cursor starts before the first step so the
   // canvas opens showing the topology rather than a stage already selected.
-  TOUR = {stages: t.stages, cursor: -1};
+  TOUR = {stages: t.stages, cursor: -1,
+          escalated: t.timeline.some(e => e.event_type === 'escalated')};
 
   box.innerHTML = `
     <h1>Run <code>${esc(id.slice(0, 8))}</code></h1>
