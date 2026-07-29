@@ -7,6 +7,7 @@ Socratic hint → grade → teacher review.
 
 <img width="2206" height="1123" alt="image" src="https://github.com/user-attachments/assets/5abf4632-74c7-4002-9de0-e26b9a694eb5" />
 
+<img width="2232" height="1249" alt="image" src="https://github.com/user-attachments/assets/92145c98-434d-4464-8637-18ef8b2fbf6a" />
 
 - [Architecture.md](Architecture.md) — system design (current revision: a model call at every stage)
 - [Architecture-deterministic.md](Architecture-deterministic.md) — prior no-LLM revision, kept for comparison
