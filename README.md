@@ -122,6 +122,16 @@ properties are load-bearing:
   responder rather than protecting anyone. The gap is recorded as degradation
   instead, and `safety_alert` carries the child's identity while the prompt that
   produced it cannot — the model judges text, the adult gets the name.
+- **It runs before the answer is judged, on every submission.** The student
+  endpoint has to grade first — it cannot know whether to hint until it does —
+  and for a while it entered the pipeline only when the answer was wrong, with
+  the screen sitting inside that pipeline as its entry node. So the screen was
+  unconditional within something that was itself conditional, and children who
+  answered correctly went unscreened: 0 of 2 on the deployed record, against 17
+  of 17 who answered wrong. It is now hoisted ahead of grading, in the one place
+  every submission passes through, and its outcome is handed down rather than
+  re-derived — because a child who is keeping up is still a child, and two
+  screens on one submission would page a responder twice for one disclosure.
 
 P1.8 requires a *measured* false-negative rate, so there is one:
 
@@ -267,6 +277,53 @@ content**. Everything currently in `packages/curriculum/seed.py` and
 themselves. It exists to exercise the machinery and must be *replaced* by
 teacher-authored content, not extended — otherwise the eval inherits one
 engineer's assumptions about what a K-1 error looks like.
+
+## The swarm canvas and the guided tour (§4)
+
+The same page draws the pipeline, and the drawing is derived rather than
+maintained. `GET /admin/topology` reads nodes and edges from each agent's
+`Command[Literal[...]]` return annotation — the same annotation LangGraph
+validates the graph against — so the picture cannot disagree with the graph that
+ran. A hand-drawn diagram is accurate on the day it is drawn; this one is
+accurate or the graph is broken. Nodes lay out left-to-right by handoff distance
+from the entry node, so the picture follows the code's order rather than a
+hand-placed guess at it.
+
+Every node carries one plain sentence saying what it is for, from
+`swarm.NODE_PURPOSE`, and a test asserts that each one has it — so adding a node
+forces an explanation of why it exists. Without that the canvas is a picture of
+names, and a name is not an explanation.
+
+**The tour walks a real session, not a script.** That is the whole point: a
+scripted tour shows the happy path, and this shows what actually happened —
+including the stage that fell back, the diagnosis that came back `unknown`, and
+the template served because shadow mode is on. Nodes that never ran on the
+session being walked are not lit.
+
+## Cost and latency, segmented by prompt version (§8, P1.10)
+
+`GET /admin/economics`, rendered as a panel on the same page. Every figure is
+aggregated from the `llm_call` ledger at read time — no rollups, no cost table,
+no cache — so the numbers cannot drift from the calls that produced them.
+
+- **Segmented by prompt version, not only by stage.** Two rows for one stage
+  means two prompt versions are live at once, which during a staged rollout is
+  expected and is exactly what §8 asks to see. A prompt change that quietly
+  doubles spend is invisible in a per-stage total.
+- **p95 is withheld below 20 calls** rather than computed. A p95 over eight
+  samples is the second-slowest call wearing a statistic's name, and it would be
+  read as a measurement.
+- **Cost is fixed at call time, never re-derived.** `PRICING` in
+  `packages/llm/models.py` carries date-windowed rates, so a session costed
+  during a promotional period stays correct afterwards.
+
+> **This is measurement, not enforcement.** P1.10 also asks for per-stage
+> budgets, per-tenant rate limits, and alerting on cost-per-session regression.
+> None of those are built. Spend is fully observable and entirely unbounded —
+> you would see it, in a panel only an admin can open, after it happened. The
+> scan is also capped at the most recent 5000 calls so that an operator page
+> cannot become an outage, which means the totals become a recent window rather
+> than an all-time figure once a deployment passes that mark.
 
 ## Setup
 
@@ -415,6 +472,29 @@ Welfare alerts deliberately do **not** come through here; §7's distress path ha
 its own table and its own urgency. `ReviewReason.SAFETY_FLAG` exists in the enum
 and is never emitted, which a test enforces.
 
+**Grading, made visible** (§3.5). Grading was the least-instrumented stage in a
+system whose whole argument is that a grade can be defended later. Three gaps,
+all the same shape — nothing a user could see broke, so nothing failed:
+
+- **The stage never recorded an ending.** `recorder.graded` carries the verdict
+  but no `stage`, so grade logged a `stage_started` and nothing terminal: the
+  per-stage trace read *unterminated* on every run ever inspected, grade latency
+  could not be measured at all, and a grade that completed was indistinguishable
+  from one that died mid-call. It now emits `stage_completed` with the score,
+  the method, and whether the checker agreed — and a missing checker emits
+  `fallback_used`, so grading degrades visibly like every other stage.
+- **`grade_result` was a table nothing wrote to.** The entity had validation, the
+  table was in the schema and in a migration, and the only code that ever
+  inserted a row was `scripts/demo_session.py`. Every real session recorded a
+  `graded` event and nothing else — the same shape as the `ReviewItem` gap
+  above, which is why it is worth checking for deliberately rather than waiting
+  to notice it twice.
+- **A teacher could not see the grade they were being asked to confirm.** The
+  console showed the child's answers and the correct answer, but not what the
+  system had decided about them, so reaching a verdict meant redoing the
+  arithmetic first. Verdicts are now joined per attempt, and a checker
+  disagreement is called out rather than folded into the number.
+
 **Teacher console** — Phase 0's rating instrument (P0.8) — at
 `/teacher/rate?as=<teacher-principal-id>`, review queue at
 `/teacher/review-queue`:
@@ -507,7 +587,7 @@ packages/auth/        roles, tenancy, authorization policy
 packages/telemetry/   event log, session replay, OTel spans
 packages/curriculum/  fixture KB seed (engineer-written, to be replaced)
 services/api/         student page, teacher console, admin rollout control
-services/orchestrator/ §4 state machine, stages, review routing, rollout policy
+services/orchestrator/ §4 LangGraph swarm, stages, review routing, rollout policy
 services/symbolic/    isolated SymPy equivalence service
 services/safety/      §7 welfare alert sinks and responders
 eval/                 datasets, suites, adversarial corpora, harness, Phase 0 gate report
