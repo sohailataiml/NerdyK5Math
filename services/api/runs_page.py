@@ -96,6 +96,25 @@ RUNS_PAGE = """
   .active-stage h3 { font-size: .95rem; margin: 0; }
   .active-stage .io { padding: 0 .9rem .9rem; }
   .active-stage pre { max-height: 15rem; }
+  /* --- cost and latency (§8, P1.10) ------------------------------------ */
+  .econ { border: 1px solid rgba(128,128,128,.3); border-radius: 10px;
+          padding: .8rem 1rem; margin-bottom: 1rem; font-size: .84rem; }
+  .econ h2 { font-size: .82rem; margin: 0 0 .1rem; text-transform: uppercase;
+             letter-spacing: .05em; opacity: .7; }
+  .econ .headline { font-size: 1.15rem; font-weight: 600; margin-bottom: .1rem; }
+  .econ .note { opacity: .6; font-size: .72rem; margin-bottom: .55rem; }
+  .econ table { width: 100%; border-collapse: collapse; }
+  .econ td { padding: .2rem .5rem .2rem 0; vertical-align: baseline; }
+  .econ td:first-child { width: 40%; }
+  .econ td.n { text-align: right; font-variant-numeric: tabular-nums;
+               white-space: nowrap; width: 15%; }
+  .econ thead td { font-size: .72rem; text-transform: uppercase;
+                   letter-spacing: .05em; opacity: .6; }
+  .econ .bar { height: 4px; border-radius: 2px; background: #5b8def; margin-top: .1rem; }
+  .econ .bar.deep { background: #d98b3a; }
+  .econ .unknown { opacity: .5; font-style: italic; }
+  .econ details { margin-top: .5rem; }
+  .econ summary { cursor: pointer; opacity: .75; }
   .timeline { margin-top: 1.5rem; }
   .timeline li { font-size: .8rem; opacity: .85; margin-bottom: .15rem; }
   .warn { color: #b3452f; font-weight: 600; }
@@ -110,6 +129,7 @@ RUNS_PAGE = """
 </aside>
 
 <main>
+  <div id="econ"></div>
   <div id="detail"><p class="empty">Pick a run on the left.</p></div>
 </main>
 
@@ -121,6 +141,68 @@ let active = null;
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+/* Cost and latency, from the ledger (§8, P1.10).
+
+   The bar is share of spend, so the expensive stage is obvious without reading
+   a number — on this pipeline that is generation, and the leak check behind it
+   is the price of the guardrail rather than an inefficiency.
+
+   A p95 below the sample threshold prints "—" rather than a figure. A p95 over
+   nine calls is the second-slowest call wearing a statistic's name, and this
+   panel would otherwise be the place someone quotes it from. */
+function econRow(seg, deep) {
+  const p95 = seg.latency_p95_ms === null
+    ? `<span class="unknown">—</span>`
+    : `${seg.latency_p95_ms}ms`;
+  return `<tr>
+    <td>${esc(seg.label)}<div class="bar${deep ? ' deep' : ''}"
+        style="width:${Math.max(seg.share_of_cost * 100, 1)}%"></div></td>
+    <td class="n">${seg.calls}</td>
+    <td class="n">$${seg.cost_usd.toFixed(4)}</td>
+    <td class="n">${(seg.share_of_cost * 100).toFixed(0)}%</td>
+    <td class="n">${seg.latency_p50_ms}ms</td>
+    <td class="n">${p95}</td>
+  </tr>`;
+}
+
+async function loadEconomics() {
+  const box = document.getElementById('econ');
+  const res = await fetch('/admin/economics', {headers});
+  if (!res.ok) { box.innerHTML = ''; return; }
+  const e = await res.json();
+  if (!e.calls) {
+    box.innerHTML = '<div class="econ"><h2>Cost &amp; latency</h2>' +
+      '<div class="note">No model calls recorded yet.</div></div>';
+    return;
+  }
+  const ratio = (e.tokens_in / Math.max(e.tokens_out, 1)).toFixed(0);
+  const versions = e.by_prompt_version.map(s => econRow(s, false)).join('');
+  box.innerHTML = `
+    <div class="econ">
+      <h2>Cost &amp; latency</h2>
+      <div class="headline">$${e.total_cost_usd.toFixed(4)}</div>
+      <div class="note">${e.calls} model call(s) across ${e.sessions} session(s) ·
+        median $${e.cost_per_session_p50.toFixed(4)}/session,
+        max $${e.cost_per_session_max.toFixed(4)} ·
+        ${ratio}:1 tokens in:out</div>
+      <table>
+        <thead><tr><td>stage</td><td class="n">calls</td><td class="n">cost</td>
+            <td class="n">share</td><td class="n">p50</td><td class="n">p95</td></tr></thead>
+        ${e.by_stage.map(s => econRow(s, s.stage === 'generate_hint')).join('')}
+      </table>
+      <details>
+        <summary>By prompt version (${e.by_prompt_version.length})</summary>
+        <table>${versions}</table>
+        <div class="note">§8 asks for this split because a prompt edit can
+          double spend quietly. Two rows for one stage means two versions are
+          live at once.</div>
+      </details>
+      <div class="note">p95 shown once a stage has ${e.min_calls_for_p95}+ calls.
+        Deterministic stages make no model call, so they are absent here rather
+        than free.</div>
+    </div>`;
 }
 
 async function loadRuns() {
@@ -455,6 +537,6 @@ async function showRun(id) {
   wireTour();
 }
 
-loadTopology().then(loadRuns);
+loadTopology().then(loadRuns).then(loadEconomics);
 </script>
 """

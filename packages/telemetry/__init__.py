@@ -6,6 +6,7 @@ latency dashboards possible. Both key on `session_id` so they describe the same
 thing.
 """
 
+from packages.telemetry.economics import Economics, Segment, economics
 from packages.telemetry.events import (
     DatabaseEventSink,
     EventRecorder,
@@ -25,15 +26,18 @@ from packages.telemetry.tracing import (
 __all__ = [
     "SESSION_ID_ATTRIBUTE",
     "DatabaseEventSink",
+    "Economics",
     "EventRecorder",
     "EventSink",
     "InMemoryEventSink",
     "ReplayStep",
+    "Segment",
     "SessionReplay",
     "SessionTrace",
     "StageRun",
     "annotate_model_call",
     "configure_tracing",
+    "economics",
     "replay",
     "stage_span",
     "trace",

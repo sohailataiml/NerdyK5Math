@@ -36,6 +36,8 @@ from packages.auth import (
 from packages.domain.enums import PipelineStage
 from packages.domain.tables import SessionRow
 from packages.llm.config import STAGE_CONFIG
+from packages.telemetry import Economics
+from packages.telemetry import economics as build_economics
 from packages.telemetry import trace as build_trace
 from services.api.auth import current_scope
 from services.api.db import get_db
@@ -307,6 +309,24 @@ def _tier_for(stage: PipelineStage | None) -> str | None:
         return None
     config = STAGE_CONFIG.get(stage)
     return config.tier.value if config else None
+
+
+@router.get("/economics", response_model=Economics)
+def read_economics(
+    scope: Scope = Depends(current_scope),
+    db: DbSession = Depends(get_db),
+) -> Economics:
+    """What the pipeline costs and how long it takes (§8, P1.10).
+
+    Admin-only, like the run list: it spans every child in the deployment.
+
+    Nothing was instrumented for this. The `LLMCall` ledger has carried cost,
+    latency, tokens, model, and prompt version on every call since M0.4 — the
+    ledger was built to make a grade defensible, and answering "what does this
+    cost" turns out to be the same data asked a different question.
+    """
+    _authorize(scope)
+    return build_economics(db)
 
 
 @router.get("/runs", response_model=list[RunSummaryView])
