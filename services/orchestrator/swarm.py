@@ -56,7 +56,7 @@ from packages.domain.enums import HintSource, PipelineStage, SessionState
 from packages.domain.models import HintLog, ShadowCandidate
 from services.orchestrator.rollout import RolloutDecision, decide
 from services.orchestrator.stages import diagnose, generate, leakcheck, retrieve, safety
-from services.orchestrator.state import PipelineDeps, Problem
+from services.orchestrator.state import PipelineDeps, Problem, StageOutcome
 
 MAX_GENERATION_ATTEMPTS = 2
 """§3.3: regenerate once with a stricter prompt, then fall back to a template."""
@@ -133,6 +133,10 @@ class SwarmState(TypedDict, total=False):
     attempt: int
     student_id: UUID | None
     degraded: list[str]
+
+    screened: StageOutcome[safety.SafetyScreen] | None
+    """A welfare screen the caller already ran on this submission, if any — see
+    `_safety_agent`."""
 
     safety_screen: safety.SafetyScreen
     diagnosis: diagnose.Diagnosis
@@ -282,14 +286,27 @@ def _record_shadow(
 
 
 def _safety_agent(state: SwarmState) -> Command[Literal["diagnose_agent"]]:
+    """Screen the child's words, or carry the screen the caller already ran.
+
+    A caller that reaches this graph on every submission gets its screening here,
+    which is why the node is the entry point. A served UI reaches it only on a
+    wrong answer, so it screens up front (`graph.screen_submission`) and hands
+    the outcome down — and this node must then *not* screen again, or one
+    disclosure raises two alerts.
+    """
     deps = state["deps"]
-    screened = safety.run(
-        deps,
-        session_id=state["session_id"],
-        student_id=state["student_id"],
-        problem=state["problem"],
-        student_answer=state["student_answer"],
-        attempt=state["attempt"],
+    carried = state.get("screened")
+    screened = (
+        carried
+        if carried is not None
+        else safety.run(
+            deps,
+            session_id=state["session_id"],
+            student_id=state["student_id"],
+            problem=state["problem"],
+            student_answer=state["student_answer"],
+            attempt=state["attempt"],
+        )
     )
     degraded = list(state["degraded"])
     if screened.used_fallback:
@@ -728,6 +745,7 @@ def run(
     hint_level: int,
     attempt: int,
     student_id: UUID | None,
+    screened: StageOutcome[safety.SafetyScreen] | None = None,
 ) -> AttemptResult:
     """Invoke the swarm for one attempt and return the terminal `AttemptResult`."""
     final_state = SWARM.invoke(
@@ -739,6 +757,7 @@ def run(
             "hint_level": hint_level,
             "attempt": attempt,
             "student_id": student_id,
+            "screened": screened,
             "degraded": [],
         }
     )

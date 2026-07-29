@@ -7,12 +7,50 @@ against the record — not by review. That is the common thread and the reason t
 file exists: each one passed every test in the suite, broke nothing a user could
 see, and was invisible until the system was actually driven.
 
-Dated 2026-07-28. Evidence is quoted as measured; where a number is small the
-sample size is stated rather than rounded away.
+Dated 2026-07-28, except the welfare-screen entry below (2026-07-29). Evidence is
+quoted as measured; where a number is small the sample size is stated rather than
+rounded away.
 
 ---
 
 ## 1. Fixed
+
+### The welfare screen only reached children who got the answer wrong
+
+`services/api/student.py` grades first — it has to, to know whether to hint —
+and called `run_attempt` only when the answer was wrong. The §7 distress screen
+was the first node *inside* `run_attempt`. So the screen was unconditional
+within a pipeline that was itself conditional, and a child who answered
+correctly was never screened at all.
+
+Measured on the deployed record: **0 of 2** sessions answered correctly on the
+first try were screened; **17 of 17** with a wrong answer were. Small sample,
+unambiguous code path.
+
+`graph.py` had already written down the rule it was breaking — a screen running
+after the pipeline decides the answer is correct *"would miss exactly the
+children who are keeping up."* The code described the bug it had.
+
+The screen is now hoisted into `submit_answer`, ahead of `check_answer`, and its
+outcome is handed to `run_attempt` rather than re-derived there — otherwise one
+disclosure raises two alerts and bills two classifier calls, and a responder
+paged twice for the same child trusts the count less.
+
+**What this did not fix, stated plainly.** Checked rather than assumed: the
+symbolic grader rejects any answer carrying words, so `12 nobody would miss me`
+grades *wrong* today and reached the screen the long way round. No disclosure
+was being dropped. What was really missing was screening on correct submissions
+at all — and P2.1 is specifically an LLM normalization pass meant to accept
+messy answers, which turns the latent gap into a live one. It was cheaper to
+close while still theoretical.
+
+Worth recording separately: the test that should have caught this was
+`test_screening_runs_before_the_answer_is_judged`, which tested screening before
+*diagnosis* inside `run_attempt` — never before judgment, and never on the path
+that skipped `run_attempt` entirely. It passed throughout. A test named for a
+property it does not check is worse than no test, because it retires the
+question. Renamed to what it actually asserts, with the real ordering now pinned
+at the API level where grading happens.
 
 ### `requirements.txt` could not run the server it ships
 
@@ -99,27 +137,6 @@ half of all sessions repeat the last one. Now twelve.
 ---
 
 ## 2. Open — code
-
-### The welfare screen misses children who get the answer right
-
-**The most serious item in this file.**
-
-`services/api/student.py` grades first and calls `run_attempt` only when the
-answer is wrong. The §7 distress screen lives inside `run_attempt`. So a child
-who types something frightening *and* gets the sum right is never screened.
-
-Measured on the deployed record: **0 of 2** sessions answered correctly on the
-first try were screened; **17 of 17** sessions with a wrong answer were. The
-sample is small; the code path is unambiguous.
-
-What makes it worth fixing rather than noting: `graph.py` already argues the
-screen must run *"first and unconditionally… a screen that runs after the
-pipeline decides the answer is correct would miss exactly the children who are
-keeping up."* The code describes the bug it has. The screen is unconditional
-*within* `run_attempt`; `run_attempt` is conditional.
-
-Fix is to hoist the screen into `submit_answer` ahead of `check_answer`. It
-changes event ordering, so the replay tests move with it.
 
 ### No rate limiting anywhere
 

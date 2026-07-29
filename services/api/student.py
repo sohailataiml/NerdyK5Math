@@ -5,7 +5,7 @@ evidence *about* sessions; nothing until now let a session happen without an
 engineer running a script, and Phase 0's exit gates all need sessions that real
 children had.
 
-Three rules hold here that hold nowhere else in the codebase.
+Four rules hold here that hold nowhere else in the codebase.
 
 **No response ever contains the correct answer.** Not on a hint, not on a wrong
 answer, not on completion. §12 makes leakage the defining risk, and the whole
@@ -23,6 +23,13 @@ rule stated from the other end.
 child has used every level, the response says the work is going to their teacher
 — not that they failed. A child who reads "escalated" as punishment stops asking
 for hints, and hint-seeking is the behaviour this system exists to reward.
+
+**The welfare screen runs before the answer is judged.** This endpoint grades
+first, because it cannot know whether to hint until it does, and it enters the
+pipeline only when the answer was wrong. That makes it the one place where §7's
+"screen every submission" can be true — a screen anywhere downstream is a screen
+that only children who got it wrong receive. It ran downstream for a while, and
+0 of 2 correctly-answered sessions on the deployed record were screened.
 """
 
 from __future__ import annotations
@@ -250,6 +257,21 @@ def submit_answer(
     # Before grading: the child submitted, then it was judged, and the record has
     # to say so in that order.
     deps.recorder.answer_submitted(attempt_number=attempt_number, answer=request.answer)
+    # And before *that* judgment: the §7 welfare screen, on every submission,
+    # whatever the maths turns out to be. This endpoint grades first and enters
+    # the pipeline only when the answer was wrong, so a screen that ran inside
+    # the pipeline was a screen only wrong answers ever received — and a child
+    # who types the right answer and something frightening in the same box is
+    # precisely the child it must not miss. The outcome is carried into
+    # `run_attempt` below so nobody is screened, or alerted about, twice.
+    screened = graph.screen_submission(
+        deps,
+        session_id=session_id,
+        problem=problem,
+        student_answer=request.answer,
+        student_id=student_id,
+        attempt=attempt_number,
+    )
     graded = graph.check_answer(
         deps,
         session_id=session_id,
@@ -283,6 +305,7 @@ def submit_answer(
         attempt=attempt_number,
         student_id=student_id,
         record_submission=False,  # already logged above, in the right order
+        screened=screened,  # already screened above, before the answer was judged
     )
 
     session_row.attempt_count = attempt_number

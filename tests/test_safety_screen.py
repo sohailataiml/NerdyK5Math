@@ -305,9 +305,16 @@ class TestTheChildSeesNoDifference:
         assert result.safety_screen.flagged is True
         assert len(sink.alerts) == 1
 
-    def test_screening_runs_before_the_answer_is_judged(self) -> None:
-        """A child can type the right answer and something that matters in the
-        same box; a screen gated on a wrong answer misses those children."""
+    def test_screening_runs_before_any_teaching(self) -> None:
+        """The screen is the pipeline's first stage, ahead of diagnosis.
+
+        Named for what it actually checks. It used to be called "before the
+        answer is judged", which it never tested — `run_attempt` does not judge
+        anything, and a caller that reaches it only for wrong answers had an
+        unscreened path this test read as covered. That caller is the student
+        API, and `test_student_api.TestTheWelfareScreenReachesEveryChild` is
+        where the ordering against *grading* is actually pinned down.
+        """
         sink = RecordingSink()
         deps, events = _deps(sink=sink)
 
@@ -334,3 +341,100 @@ class TestTheChildSeesNoDifference:
         ]
         assert started and diagnose_at
         assert started[0] < diagnose_at[0], ordered
+
+
+class TestScreeningExactlyOnce:
+    """A caller that screens up front hands the outcome down (P1.8).
+
+    The student API has to grade before it knows whether to hint, so it screens
+    ahead of grading and enters the pipeline only afterwards. Both halves matter:
+    without the hoist, correct answers go unscreened; without the handoff, wrong
+    answers get screened twice — one disclosure, two alerts, two billed
+    classifier calls, and a responder learning that the count means nothing.
+    """
+
+    def test_a_caller_supplied_screen_is_not_run_again(self) -> None:
+        sink = RecordingSink()
+        deps, events = _deps(sink=sink)
+        session_id = uuid.uuid4()
+        student_id = uuid.uuid4()
+
+        screened = graph.screen_submission(
+            deps,
+            session_id=session_id,
+            problem=PROBLEM,
+            student_answer="2 i want to die",
+            student_id=student_id,
+        )
+        assert screened.value.flagged is True
+
+        graph.run_attempt(
+            deps,
+            session_id=session_id,
+            problem=PROBLEM,
+            student_answer="2 i want to die",
+            student_id=student_id,
+            screened=screened,
+        )
+
+        assert len(sink.alerts) == 1
+        starts = [
+            e
+            for e in events.events
+            if e.event_type is EventType.STAGE_STARTED and e.stage is PipelineStage.SAFETY_SCREEN
+        ]
+        assert len(starts) == 1
+
+    def test_the_carried_verdict_still_reaches_the_result(self) -> None:
+        """The screen's outcome is evidence about the attempt wherever it ran —
+        a teacher reviewing the session should not be able to tell."""
+        sink = RecordingSink()
+        deps, _ = _deps(sink=sink)
+        session_id = uuid.uuid4()
+
+        screened = graph.screen_submission(
+            deps,
+            session_id=session_id,
+            problem=PROBLEM,
+            student_answer="2 my brother hits me",
+            student_id=uuid.uuid4(),
+        )
+        result = graph.run_attempt(
+            deps,
+            session_id=session_id,
+            problem=PROBLEM,
+            student_answer="2 my brother hits me",
+            student_id=uuid.uuid4(),
+            screened=screened,
+        )
+
+        assert result.safety_screen is not None
+        assert result.safety_screen.flagged is True
+        assert result.hint_text  # and the lesson still continues unchanged
+
+    def test_a_degraded_screen_is_still_reported_when_carried(self) -> None:
+        """§8 must see the weaker protection regardless of who ran the screen —
+        otherwise hoisting it would quietly hide classifier outages."""
+        sink = RecordingSink()
+        deps, _ = _deps(sink=sink, transport_error=True)
+        session_id = uuid.uuid4()
+
+        screened = graph.screen_submission(
+            deps,
+            session_id=session_id,
+            problem=PROBLEM,
+            student_answer="2",
+            student_id=uuid.uuid4(),
+        )
+        assert screened.used_fallback is True
+
+        result = graph.run_attempt(
+            deps,
+            session_id=session_id,
+            problem=PROBLEM,
+            student_answer="2",
+            student_id=uuid.uuid4(),
+            screened=screened,
+        )
+
+        assert "safety_screen" in result.degraded_stages

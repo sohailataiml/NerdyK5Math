@@ -24,8 +24,8 @@ from packages.domain.enums import UNKNOWN_TAG_LABEL, ReviewReason, SessionState
 from packages.domain.models import GradeResult
 from services.orchestrator import swarm
 from services.orchestrator.review import reasons_for_review
-from services.orchestrator.stages import diagnose, grade
-from services.orchestrator.state import PipelineDeps, Problem
+from services.orchestrator.stages import diagnose, grade, safety
+from services.orchestrator.state import PipelineDeps, Problem, StageOutcome
 
 MAX_GENERATION_ATTEMPTS = swarm.MAX_GENERATION_ATTEMPTS
 """§3.3: regenerate once with a stricter prompt, then fall back to a template."""
@@ -33,6 +33,40 @@ MAX_GENERATION_ATTEMPTS = swarm.MAX_GENERATION_ATTEMPTS
 AttemptResult = swarm.AttemptResult
 """What the child gets, and everything needed to explain why (defined in
 `swarm.py`, alongside the agents that build it)."""
+
+
+def screen_submission(
+    deps: PipelineDeps,
+    *,
+    session_id: UUID,
+    problem: Problem,
+    student_answer: str,
+    student_id: UUID | None = None,
+    attempt: int = 1,
+) -> StageOutcome[safety.SafetyScreen]:
+    """Run the §7 welfare screen on one submission, before anything judges it.
+
+    The screen is also the swarm's entry node, and for a caller that reaches the
+    swarm on every submission that is the whole story. A served UI is not such a
+    caller: it grades first and only enters the swarm when the answer was wrong,
+    so a screen that lived only inside the swarm never saw a child who typed the
+    right answer and something that matters in the same box — exactly the
+    children `stages/safety.py` says a screen must not miss.
+
+    So the screen is hoisted to the one place every submission passes through,
+    and the result is handed to `run_attempt` rather than re-derived there. Two
+    screens on one submission would mean two alerts for one disclosure and two
+    billed classifier calls, and a responder who is paged twice for the same
+    child learns to trust the count less.
+    """
+    return safety.run(
+        deps,
+        session_id=session_id,
+        student_id=student_id,
+        problem=problem,
+        student_answer=student_answer,
+        attempt=attempt,
+    )
 
 
 def run_attempt(
@@ -45,6 +79,7 @@ def run_attempt(
     attempt: int = 1,
     student_id: UUID | None = None,
     record_submission: bool = True,
+    screened: StageOutcome[safety.SafetyScreen] | None = None,
 ) -> AttemptResult:
     """Diagnose -> retrieve -> generate -> leak-check, producing one hint.
 
@@ -53,6 +88,11 @@ def run_attempt(
     records the answer first; leaving this on would put `answer_submitted` after
     `graded` in the log, and a replay that says a child's answer was graded
     before they submitted it is not a faithful account of their session.
+
+    `screened` is the same idea for the welfare screen: a caller that already ran
+    `screen_submission` passes the outcome in, and the swarm carries it rather
+    than screening the child twice. Left `None`, the swarm screens — which is
+    right for a caller whose only entry point this is.
     """
     if record_submission:
         deps.recorder.answer_submitted(attempt_number=attempt, answer=student_answer)
@@ -65,6 +105,7 @@ def run_attempt(
         hint_level=hint_level,
         attempt=attempt,
         student_id=student_id,
+        screened=screened,
     )
 
 

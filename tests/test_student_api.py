@@ -24,7 +24,7 @@ from sqlalchemy.pool import StaticPool
 
 from packages.domain import models as m
 from packages.domain import tables as t
-from packages.domain.enums import EventType, Role, SessionState
+from packages.domain.enums import EventType, PipelineStage, Role, SessionState
 from packages.domain.mapping import to_row
 from services.api.app import app
 from services.api.auth import PRINCIPAL_HEADER
@@ -286,6 +286,117 @@ class TestSessionFlow:
             json={"answer": CORRECT},
         )
         assert response.status_code == 409
+
+
+class TestTheWelfareScreenReachesEveryChild:
+    """§7's screen must not be gated on getting the answer wrong (P1.8).
+
+    It was, and not by anyone's decision: this endpoint grades first — it has to,
+    to know whether to hint — and entered the pipeline only on a wrong answer,
+    while the screen lived inside the pipeline as its entry node. So a child who
+    answered correctly was never screened. Measured on the deployed record before
+    the fix: 0 of 2 correct-first-try sessions screened, 17 of 17 wrong ones.
+
+    What that did *not* do, today, is drop a disclosure on the floor: the
+    symbolic grader rejects any answer carrying words, so "12 nobody would miss
+    me" grades wrong and reaches the screen the long way round. The gap is one
+    P2.1 opens for real — LLM answer normalization is specifically meant to
+    accept messy text — and it is cheaper to close while it is still theoretical.
+    So these tests assert the property, not the symptom.
+    """
+
+    def _stage_starts(self, db: DbSession, session_id: uuid.UUID) -> list[EventType]:
+        return list(
+            db.execute(
+                select(t.PipelineEventRow.event_type)
+                .where(
+                    t.PipelineEventRow.session_id == session_id,
+                    t.PipelineEventRow.stage == PipelineStage.SAFETY_SCREEN,
+                    t.PipelineEventRow.event_type == EventType.STAGE_STARTED,
+                )
+                .order_by(t.PipelineEventRow.sequence)
+            )
+            .scalars()
+            .all()
+        )
+
+    def test_a_correct_answer_is_screened_too(
+        self, client: TestClient, world: World, db: DbSession
+    ) -> None:
+        """The regression. A child who is keeping up is still a child."""
+        started = _start(client, world, world.principal_a)
+        session_id = uuid.UUID(str(started["session_id"]))
+        result = _answer(client, world, world.principal_a, str(session_id), CORRECT)
+
+        assert result["correct"] is True  # the path that used to skip the screen
+        assert len(self._stage_starts(db, session_id)) == 1
+
+    def test_the_screen_runs_before_the_answer_is_judged(
+        self, client: TestClient, world: World, db: DbSession
+    ) -> None:
+        """Ordering is the whole mechanism: anything after the verdict is a
+        screen that only some children get."""
+        started = _start(client, world, world.principal_a)
+        session_id = uuid.UUID(str(started["session_id"]))
+        _answer(client, world, world.principal_a, str(session_id), CORRECT)
+
+        events = (
+            db.execute(
+                select(t.PipelineEventRow)
+                .where(t.PipelineEventRow.session_id == session_id)
+                .order_by(t.PipelineEventRow.sequence)
+            )
+            .scalars()
+            .all()
+        )
+        order = [e.event_type for e in events]
+        screened_at = next(
+            i
+            for i, e in enumerate(events)
+            if e.stage is PipelineStage.SAFETY_SCREEN and e.event_type is EventType.STAGE_STARTED
+        )
+        assert screened_at < order.index(EventType.GRADED), order
+
+    def test_a_wrong_answer_is_screened_exactly_once(
+        self, client: TestClient, world: World, db: DbSession
+    ) -> None:
+        """Hoisting the screen must not leave the pipeline screening again.
+
+        Two screens on one submission means two alerts for one disclosure, and a
+        responder paged twice for the same child trusts the count less — which is
+        the resource the whole screen depends on.
+        """
+        started = _start(client, world, world.principal_a)
+        session_id = uuid.UUID(str(started["session_id"]))
+        _answer(client, world, world.principal_a, str(session_id), "2")
+
+        assert len(self._stage_starts(db, session_id)) == 1
+
+    def test_a_disclosure_raises_one_alert_naming_the_child(
+        self, client: TestClient, world: World, db: DbSession
+    ) -> None:
+        started = _start(client, world, world.principal_a)
+        session_id = uuid.UUID(str(started["session_id"]))
+        _answer(client, world, world.principal_a, str(session_id), "2 i want to die")
+
+        alerts = (
+            db.execute(select(t.SafetyAlertRow).where(t.SafetyAlertRow.session_id == session_id))
+            .scalars()
+            .all()
+        )
+        assert len(alerts) == 1
+        assert alerts[0].student_id == world.child_a.id
+
+    def test_every_submission_in_a_session_is_screened(
+        self, client: TestClient, world: World, db: DbSession
+    ) -> None:
+        """Including the last one, which is the one a child gets right."""
+        started = _start(client, world, world.principal_a)
+        session_id = uuid.UUID(str(started["session_id"]))
+        _answer(client, world, world.principal_a, str(session_id), "2")
+        _answer(client, world, world.principal_a, str(session_id), CORRECT)
+
+        assert len(self._stage_starts(db, session_id)) == 2
 
 
 class TestTheRecordIsTrue:
