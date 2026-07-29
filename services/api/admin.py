@@ -34,6 +34,7 @@ from packages.auth import (
     require,
 )
 from packages.domain.enums import PipelineStage
+from packages.domain.models import LLMCall
 from packages.domain.tables import SessionRow
 from packages.llm.config import STAGE_CONFIG
 from packages.telemetry import Economics
@@ -201,6 +202,21 @@ def kill_generation(
 # their own students. It must never be reachable from the student client.
 
 
+class PromptView(BaseModel):
+    """The prompt as sent, replayed from the ledger.
+
+    Not re-rendered. Half the stages substitute values the ledger's
+    `PromptContext` does not carry — `generate_hint` a strategy and hint level,
+    `leak_check` a hint — so re-rendering those would produce a prompt that
+    reads plausibly and was never sent. This is the recorded text or nothing.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    system: str
+    user: str
+
+
 class StageRunView(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -215,6 +231,12 @@ class StageRunView(BaseModel):
 
     model_id: str | None
     prompt_version: str | None
+    prompt: PromptView | None
+    """The text this call actually sent. `None` on a deterministic stage, which
+    sent nothing, and on a model call made before prompts were recorded — said
+    plainly rather than reconstructed, because a prompt shown to explain a grade
+    has to be the one that produced it."""
+
     tokens_in: int | None
     tokens_out: int | None
     latency_ms: int | None
@@ -304,6 +326,27 @@ def read_topology(scope: Scope = Depends(current_scope)) -> list[SwarmNodeView]:
     ]
 
 
+def _prompt_of(call: LLMCall | None) -> PromptView | None:
+    """Read the recorded prompt off a ledger row, or report that there isn't one.
+
+    Deliberately all-or-nothing. A row written before prompts were captured has
+    no `rendered_prompt` key, and one written by a future payload change might
+    have a different shape; in both cases the honest answer is that the text is
+    not on record. Filling either half from somewhere else would produce a
+    prompt that looks like evidence — and this surface exists precisely so a
+    grade can be defended by what happened rather than by what usually happens.
+    """
+    if call is None:
+        return None
+    recorded = call.input_payload.get("rendered_prompt")
+    if not isinstance(recorded, dict):
+        return None
+    system, user = recorded.get("system"), recorded.get("user")
+    if not isinstance(system, str) or not isinstance(user, str):
+        return None
+    return PromptView(system=system, user=user)
+
+
 def _tier_for(stage: PipelineStage | None) -> str | None:
     if stage is None:
         return None
@@ -382,6 +425,7 @@ def read_run(
                 used_model=run.used_model,
                 model_id=run.llm_call.model_id if run.llm_call else None,
                 prompt_version=run.llm_call.prompt_version if run.llm_call else None,
+                prompt=_prompt_of(run.llm_call),
                 tokens_in=run.llm_call.tokens_in if run.llm_call else None,
                 tokens_out=run.llm_call.tokens_out if run.llm_call else None,
                 latency_ms=run.llm_call.latency_ms if run.llm_call else None,

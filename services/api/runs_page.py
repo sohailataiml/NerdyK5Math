@@ -56,6 +56,13 @@ RUNS_PAGE = """
   .stage .nums { margin-left: auto; font-size: .78rem; opacity: .7; }
   .io { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; padding: 0 .9rem .9rem; }
   .io section { min-width: 0; }
+  /* The prompt spans both columns: it is prose, and reading it in a half-width
+     column beside a JSON dump is how it goes unread. */
+  .io .prompt { grid-column: 1 / -1; }
+  .prompt details { margin: 0 0 .35rem; }
+  .prompt summary { cursor: pointer; font-size: .72rem; opacity: .65; padding: .2rem 0; }
+  .prompt summary:hover { opacity: 1; }
+  .prompt pre { white-space: pre-wrap; max-height: 24rem; }
   .io h4 { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
            opacity: .6; margin: 0 0 .3rem; }
   pre { margin: 0; padding: .6rem .7rem; border-radius: 8px; overflow-x: auto;
@@ -418,8 +425,9 @@ function activeStage(run) {
         ${badge}
       </header>
       <div class="io">
-        <section><h4>in</h4>${payload(run.inputs)}</section>
+        <section><h4>in</h4>${payload(withoutPrompt(run.inputs))}</section>
         <section><h4>out</h4>${payload(run.outputs)}</section>
+        ${promptBlock(run)}
       </div>
     </div>`;
 }
@@ -464,6 +472,37 @@ function payload(obj) {
   return '<pre>' + esc(JSON.stringify(obj, null, 2)) + '</pre>';
 }
 
+/* The prompt is lifted out of the JSON blob and shown as text below. It is
+   still shown in full — a 2KB prompt escaped into a JSON string, with \\n
+   between every line, is present in the way that a thing in a drawer is
+   present. Removed here so it appears once, and legibly. */
+function withoutPrompt(inputs) {
+  if (!inputs || !inputs.llm_input || !inputs.llm_input.rendered_prompt) return inputs;
+  const trimmed = Object.assign({}, inputs.llm_input);
+  delete trimmed.rendered_prompt;
+  return Object.assign({}, inputs, {llm_input: trimmed});
+}
+
+/* What this call actually sent. Never re-rendered from the template plus the
+   context: `generate_hint` substitutes a strategy and a hint level and
+   `leak_check` a hint, none of which the ledger's context carries, so a
+   re-render would read plausibly and be wrong for exactly the two stages most
+   worth reading. A call with no recorded prompt says so. */
+function promptBlock(s) {
+  if (!s.used_model) return '';
+  if (!s.prompt) {
+    return '<section class="prompt"><h4>prompt</h4>'
+         + '<pre class="empty">not recorded — this call predates prompt capture</pre>'
+         + '</section>';
+  }
+  return `
+    <section class="prompt">
+      <h4>prompt — as sent <span class="tag">${esc(s.prompt_version)}</span></h4>
+      <details><summary>system</summary><pre>${esc(s.prompt.system)}</pre></details>
+      <details open><summary>user</summary><pre>${esc(s.prompt.user)}</pre></details>
+    </section>`;
+}
+
 function stageCard(s, index) {
   const cls = s.outcome === 'failed' ? 'failed'
             : s.outcome === 'fallback' ? 'fallback'
@@ -483,8 +522,9 @@ function stageCard(s, index) {
         <span class="nums">${esc(nums)}</span>
       </header>
       <div class="io">
-        <section><h4>in</h4>${payload(s.inputs)}</section>
+        <section><h4>in</h4>${payload(withoutPrompt(s.inputs))}</section>
         <section><h4>out</h4>${payload(s.outputs)}</section>
+        ${promptBlock(s)}
       </div>
     </article>`;
 }

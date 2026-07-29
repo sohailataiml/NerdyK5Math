@@ -301,6 +301,109 @@ class TestAgainstARealRun:
         assert all(run.outcome != "unterminated" for run in result.stages)
 
 
+class TestThePromptIsRecordedAsSent:
+    """The wording behind a call, replayable rather than reconstructed.
+
+    The ledger already pinned the prompt *version* and a hash of the template.
+    Neither is the text that was sent: `render` substitutes values, and for two
+    stages those values are not in `PromptContext` at all. So the rendered text
+    is recorded, and the two tests that matter are the ones proving a re-render
+    could not have produced it.
+    """
+
+    def _ledger_for(self, session: DbSession) -> InMemoryLedger:
+        seed(session)
+        sink = InMemoryEventSink()
+        session_id = uuid.uuid4()
+        ledger = InMemoryLedger()
+
+        def respond(system: str, _user: str) -> str:
+            return "SAFE" if "gives away the answer" in system else "Try the ten-frame."
+
+        deps = PipelineDeps(
+            recorder=EventRecorder(sink, session_id),
+            prompts=PromptRegistry(),
+            llm=LLMClient(FakeTransport(responder=respond), ledger),
+            db=session,
+            shadow_mode=False,
+        )
+        graph.run_attempt(deps, session_id=session_id, problem=PROBLEM, student_answer="2")
+        return ledger
+
+    def test_every_model_call_records_the_text_it_sent(self, session: DbSession) -> None:
+        ledger = self._ledger_for(session)
+        assert ledger.calls
+        for call in ledger.calls:
+            recorded = call.input_payload["rendered_prompt"]
+            assert isinstance(recorded, dict)
+            assert recorded["system"] and recorded["user"]
+
+    def test_the_hint_prompt_carries_what_the_context_cannot(self, session: DbSession) -> None:
+        """`generate_hint` substitutes the retrieved strategy and the hint level.
+
+        Neither is a `PromptContext` field, so this text is not derivable from
+        the ledger's context plus the template — which is the whole reason it is
+        recorded rather than re-rendered. The assertion is direct: the strategy
+        is in what was sent, and appears nowhere else on the row.
+        """
+        ledger = self._ledger_for(session)
+        hint_calls = [c for c in ledger.calls if c.stage is PipelineStage.GENERATE_HINT]
+        assert hint_calls
+
+        payload = dict(hint_calls[0].input_payload)
+        sent = str(payload.pop("rendered_prompt"))
+        strategy = "Ten-frame: fill the frame to 10 first, then add what is left over."
+
+        assert strategy in sent
+        assert "Hint level: 1" in sent
+        # The rest of the row — every context field the ledger keeps — does not
+        # contain it. A re-render would have had to invent this line.
+        assert strategy not in str(payload)
+
+    def test_the_leak_check_prompt_carries_the_hint_it_judged(self, session: DbSession) -> None:
+        """`leak_check` substitutes the hint text, which the context also lacks —
+        and this is the stage §12 calls the highest-severity in the system, so a
+        plausible-but-wrong reconstruction of its prompt is the worst case."""
+        ledger = self._ledger_for(session)
+        checks = [c for c in ledger.calls if c.stage is PipelineStage.LEAK_CHECK]
+        assert checks
+
+        sent = str(checks[0].input_payload["rendered_prompt"])
+        assert "Try the ten-frame." in sent
+        assert checks[0].input_payload.get("student_answer") is None
+
+    def test_a_row_without_a_recorded_prompt_reports_absence(self) -> None:
+        """Rows written before prompt capture must say so, not show half a prompt.
+
+        `_prompt_of` is all-or-nothing on purpose: a prompt shown to explain a
+        grade has to be the one that produced it, and a partial reads as
+        evidence.
+        """
+        from services.api.admin import _prompt_of
+
+        assert _prompt_of(None) is None
+        for payload in (
+            {},  # predates capture
+            {"rendered_prompt": "a string, not a pair"},
+            {"rendered_prompt": {"system": "only half"}},
+            {"rendered_prompt": {"system": "s", "user": 12}},
+        ):
+            call = m.LLMCall(
+                session_id=uuid.uuid4(),
+                stage=PipelineStage.DIAGNOSE,
+                model_id="m",
+                prompt_version="v1",
+                input_payload=payload,
+                output_payload={},
+                tokens_in=1,
+                tokens_out=1,
+                latency_ms=1,
+                cost_usd=0.0,
+                created_at=NOW,
+            )
+            assert _prompt_of(call) is None, payload
+
+
 # ---------------------------------------------------------------------------
 # The endpoint. Weighted toward who may not read it.
 # ---------------------------------------------------------------------------

@@ -242,6 +242,18 @@ class TestPiiBoundary:
                 )
 
     def test_ledger_payload_carries_no_student_identity(self) -> None:
+        """A closed allowlist, so a future edit to `client.py` that starts
+        recording something extra fails here rather than in a compliance review.
+
+        `rendered_prompt` is on the list deliberately. It is the text that was
+        actually sent, so recording it cannot expose anything that did not
+        already cross the provider boundary — and §12's argument that a grade can
+        be defended later needs the wording that produced it. Note what it does
+        change: the context half of a payload is structurally safe because
+        `PromptContext` forbids identity fields, while this half is safe only
+        because no stage passes identity into `render()`. Anything added to this
+        set wants that sentence answered for it too.
+        """
         client, ledger = _client(FakeTransport())
         _complete(client)
 
@@ -255,6 +267,18 @@ class TestPiiBoundary:
             "attempt_number",
             "extra",
             "prompt_content_hash",
+            "rendered_prompt",
             "max_tokens",
             "timeout_s",
         }
+
+    def test_the_recorded_prompt_carries_only_the_text_that_was_sent(self) -> None:
+        """No nesting beyond the two strings, so the field cannot become a place
+        that other things get tucked into."""
+        client, ledger = _client(FakeTransport())
+        _complete(client)
+
+        recorded = ledger.calls[0].input_payload["rendered_prompt"]
+        assert isinstance(recorded, dict)
+        assert set(recorded) == {"system", "user"}
+        assert all(isinstance(value, str) for value in recorded.values())

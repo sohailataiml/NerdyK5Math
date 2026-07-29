@@ -173,6 +173,20 @@ class LLMClient:
                 # audit can prove which wording produced a grade even after the
                 # library has moved on (§8 segments quality by prompt version).
                 "prompt_content_hash": prompt.content_hash,
+                # And the text as sent. The hash above pins the *template*; this
+                # is the rendered result, which is per-call and cannot be
+                # recovered from the template plus the context — `generate_hint`
+                # substitutes a strategy and hint level, and `leak_check` a hint,
+                # none of which `PromptContext` carries. Without this, replaying
+                # a prompt for those two stages would mean re-rendering with
+                # missing values and showing a plausible prompt that was never
+                # sent. §12's argument is that a grade can be defended later, and
+                # the wording that produced it is half of that defence.
+                #
+                # No new exposure: the context beside it already carries the
+                # child's answer and `correct_answer`, and this whole row is
+                # behind M0.9's `can_read_audit_trail`.
+                "rendered_prompt": {"system": prompt.system, "user": prompt.user},
                 "max_tokens": config.max_tokens,
                 "timeout_s": config.timeout_s,
             },
