@@ -16,3 +16,6 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+
+# Scratch drivers used while verifying pages in a browser.
+.*.mjs
