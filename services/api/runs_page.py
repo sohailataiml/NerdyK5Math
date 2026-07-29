@@ -78,6 +78,21 @@ RUNS_PAGE = """
                     color: inherit; padding: .3rem .8rem; }
   .tourbar button:hover:not(:disabled) { border-color: currentColor; }
   .tourbar button:disabled { opacity: .4; cursor: default; }
+  .tourbar .pace { font-size: .74rem; opacity: .75; display: inline-flex;
+                   align-items: center; gap: .35rem; }
+  .tourbar .pace select { font: inherit; padding: .15rem .3rem; border-radius: 6px;
+                          background: transparent; color: inherit;
+                          border: 1px solid rgba(128,128,128,.4); }
+  /* How long is left on this node, so the pace is legible rather than a
+     surprise. Purely informational — it never gates anything. */
+  .tour-progress { height: 2px; margin: 0 .9rem .5rem; border-radius: 2px;
+                   background: rgba(128,128,128,.18); overflow: hidden; }
+  .tour-progress span { display: block; height: 100%; background: #d98b3a;
+                        transform-origin: left; animation: tour-tick linear forwards; }
+  @keyframes tour-tick { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    .tour-progress span { animation: none; transform: scaleX(1); }
+  }
   .step { font-size: .82rem; opacity: .75; margin-left: auto; }
   .narration { font-size: .9rem; padding: .5rem .75rem; border-left: 3px solid #5b8def;
                background: rgba(91,141,239,.07); border-radius: 0 6px 6px 0;
@@ -247,6 +262,64 @@ async function loadRuns() {
 let TOPOLOGY = null;
 let TOUR = null;   // { stages, cursor }
 
+/* Playback state. `TOUR_TIMER` is held so there can only ever be one pending
+   hold: without it, a second click of Play started a second chain and the tour
+   advanced two nodes at a time past whatever the reader was mid-way through. */
+let TOUR_TIMER = null;
+let TOUR_PLAYING = false;
+let TOUR_SPEED = 1;
+
+/* How long to hold on one node before advancing.
+
+   A fixed interval is the wrong shape. A deterministic rerank card holds two
+   lines; a generate_hint card holds a full prompt, a strategy, and both
+   payloads. One beat either rushes the second or crawls through the first, so
+   the hold scales with how much there is to read — from a floor already long
+   enough to take in the node's purpose sentence and glance at the canvas.
+
+   The cap exists because past a point a reader would rather stop and read than
+   be timed, and Pause is right there. */
+const TOUR_BASE_MS = 4000;
+const TOUR_MS_PER_CHAR = 7;
+const TOUR_MAX_MS = 13000;
+
+function holdFor(run) {
+  if (!run) return TOUR_BASE_MS * TOUR_SPEED;
+  const shown = narrate(run)
+    + (purposeOf(nodeIdFor(run, TOPOLOGY)) || '')
+    + JSON.stringify(withoutPrompt(run.inputs) || {})
+    + JSON.stringify(run.outputs || {})
+    + (run.prompt ? run.prompt.user : '');
+  return Math.min(TOUR_BASE_MS + shown.length * TOUR_MS_PER_CHAR, TOUR_MAX_MS) * TOUR_SPEED;
+}
+
+function stopTour(redraw) {
+  if (TOUR_TIMER !== null) clearTimeout(TOUR_TIMER);
+  TOUR_TIMER = null;
+  TOUR_PLAYING = false;
+  if (redraw) redraw();
+}
+
+function playTour(redraw) {
+  if (TOUR_TIMER !== null) clearTimeout(TOUR_TIMER);
+  TOUR_PLAYING = true;
+  // Replaying from the end starts over rather than doing nothing visible.
+  if (TOUR.cursor >= TOUR.stages.length - 1) TOUR.cursor = -1;
+  const step = () => {
+    if (!TOUR_PLAYING || !TOUR || TOUR.cursor >= TOUR.stages.length - 1) {
+      TOUR_TIMER = null;
+      TOUR_PLAYING = false;
+      redraw();
+      return;
+    }
+    TOUR.cursor += 1;
+    redraw();
+    TOUR_TIMER = setTimeout(step, holdFor(TOUR.stages[TOUR.cursor]));
+  };
+  redraw();
+  TOUR_TIMER = setTimeout(step, 500);
+}
+
 async function loadTopology() {
   const res = await fetch('/admin/topology', {headers});
   if (res.ok) TOPOLOGY = await res.json();
@@ -381,10 +454,21 @@ function renderTour() {
       <div class="tourbar">
         <button id="t-prev" ${cursor <= 0 ? 'disabled' : ''}>&larr; Back</button>
         <button id="t-next" ${cursor >= stages.length - 1 ? 'disabled' : ''}>Step &rarr;</button>
-        <button id="t-play">Play</button>
+        <button id="t-play">${TOUR_PLAYING ? 'Pause' : 'Play'}</button>
         <button id="t-reset">Reset</button>
+        <label class="pace">Pace
+          <select id="t-speed">
+            <option value="1.8" ${TOUR_SPEED === 1.8 ? 'selected' : ''}>Unhurried</option>
+            <option value="1" ${TOUR_SPEED === 1 ? 'selected' : ''}>Reading</option>
+            <option value="0.5" ${TOUR_SPEED === 0.5 ? 'selected' : ''}>Brisk</option>
+          </select>
+        </label>
         <span class="step">${cursor + 1} / ${stages.length}</span>
       </div>
+      ${TOUR_PLAYING && current
+        ? `<div class="tour-progress" aria-hidden="true">
+             <span style="animation-duration:${holdFor(current)}ms"></span></div>`
+        : ''}
       <div class="narration">${narrate(current)}</div>
       ${purposeOf(currentNode)}
       ${canvas(TOPOLOGY, seen, currentNode)}
@@ -448,19 +532,23 @@ function wireTour() {
   const next = document.getElementById('t-next');
   const play = document.getElementById('t-play');
   const reset = document.getElementById('t-reset');
-  if (prev) prev.onclick = () => { TOUR.cursor = Math.max(0, TOUR.cursor - 1); redraw(); };
-  if (next) next.onclick = () => {
-    TOUR.cursor = Math.min(TOUR.stages.length - 1, TOUR.cursor + 1); redraw();
+  const speed = document.getElementById('t-speed');
+  // Every manual control stops playback first. Stepping while the timer ran
+  // meant the tour moved under the reader's hands a moment later.
+  if (prev) prev.onclick = () => {
+    stopTour(); TOUR.cursor = Math.max(0, TOUR.cursor - 1); redraw();
   };
-  if (reset) reset.onclick = () => { TOUR.cursor = -1; redraw(); };
+  if (next) next.onclick = () => {
+    stopTour(); TOUR.cursor = Math.min(TOUR.stages.length - 1, TOUR.cursor + 1); redraw();
+  };
+  if (reset) reset.onclick = () => { stopTour(); TOUR.cursor = -1; redraw(); };
   if (play) play.onclick = () => {
-    TOUR.cursor = -1; redraw();
-    const tick = () => {
-      if (!TOUR || TOUR.cursor >= TOUR.stages.length - 1) return;
-      TOUR.cursor += 1; redraw();
-      setTimeout(tick, 900);
-    };
-    setTimeout(tick, 400);
+    if (TOUR_PLAYING) stopTour(redraw); else playTour(redraw);
+  };
+  if (speed) speed.onchange = (event) => {
+    TOUR_SPEED = parseFloat(event.target.value);
+    // Takes effect on the next hold rather than cutting the current one short:
+    // changing pace should not skip the node being read.
   };
 }
 
@@ -530,6 +618,9 @@ function stageCard(s, index) {
 }
 
 async function showRun(id) {
+  // A tour left playing would keep advancing through the run the reader just
+  // navigated away from, redrawing over the one they asked for.
+  stopTour();
   if (active) document.getElementById('r-' + active)?.classList.remove('active');
   active = id;
   document.getElementById('r-' + id)?.classList.add('active');
