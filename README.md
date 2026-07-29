@@ -14,9 +14,10 @@ Socratic hint → grade → teacher review.
 
 ## Status
 
-**M0 foundations, partially complete.** There is no application to run yet — no
-API, no CLI, no pipeline stages. What exists is the ground floor everything else
-sits on:
+**M0 is complete apart from M0.11; Phase 0's engineering is complete and blocked
+on people, not code.** There is a running application — the API, both client
+surfaces, six implemented pipeline stages, and 523 tests. M0 is the ground floor
+the rest sits on:
 
 | Task | State |
 |---|---|
@@ -66,8 +67,11 @@ revision, so this gates real student data reaching the pipeline, not the code
 being finished. Implementation-Plan.md M0.11 says to start it at M0 rather than
 at pilot; that remains outstanding and needs a human owner.
 
-The pipeline stages under `services/orchestrator/stages/` are docstring stubs.
-They exist so the import contracts have something to constrain.
+The six stages under `services/orchestrator/stages/` are implemented and run on
+every attempt: the §7 safety screen, diagnose, retrieve, generate, leak-check,
+and grade. No stage imports another — composition happens only in
+`services/orchestrator/swarm.py`, which is the first of the three import
+contracts below.
 
 ## Phase 0 — what is built, and what is blocked
 
@@ -207,10 +211,18 @@ Pick a run on the left; every stage of it appears with its input and output side
 by side. `GET /admin/runs` lists sessions, `GET /admin/runs/{id}` is the same
 trace as JSON.
 
-**A note on the name:** Implementation-Plan.md §0 chose LangGraph, but no
-LangGraph is installed and none is imported. `services/orchestrator/graph.py` is
-a hand-written state machine, so these are *pipeline stages*, not LangGraph
-nodes. The plan and the code disagree, and this is the code.
+**A note on the name:** Implementation-Plan.md §0 locked LangGraph as the
+orchestration decision, and for the whole of M0 the code quietly disagreed —
+`graph.py` was a hand-written state machine and no LangGraph was installed. That
+gap is closed: `services/orchestrator/swarm.py` is a LangGraph swarm in which
+each stage is a node that hands control onward itself via `Command(goto=…)`,
+with no supervisor choosing what runs next.
+
+What did **not** change is that every handoff is a deterministic function of
+stage output. Where a stage calls a model, the model produces *content* — a tag,
+a hint, a verdict — never the routing. Wiring an LLM's tool call into `goto` is
+the failure mode the graph exists to rule out, and §3.3 is explicit that
+skipping the leak check is not a decision available to be made per invocation.
 
 Built from the append-only record — `pipeline_event` joined to `llm_call` — so it
 reads the same months later as it did on the day, and shows nothing that was not
@@ -270,7 +282,7 @@ python -m venv .venv
 
 Commands below use the Windows venv path; swap `Scripts` for `bin` elsewhere.
 
-**Tests** — 470 of them, against in-memory SQLite, no container needed:
+**Tests** — 523 of them, against in-memory SQLite, no container needed:
 
 ```bash
 .venv/Scripts/python -m pytest
@@ -465,9 +477,9 @@ the per-stage cost ledger, and the append-only guard refusing a tamper:
 .venv/Scripts/python -m scripts.demo_session
 ```
 
-The stage outputs in the demo are hand-written, not produced by a diagnoser or
-generator — those don't exist yet. It demonstrates persistence, ledgering, and
-immutability, not tutoring.
+The stage outputs in the demo are hand-written rather than produced by the
+pipeline: it demonstrates persistence, ledgering, and immutability, not tutoring.
+For a real session through the real stages, use `scripts.run_session` above.
 
 ## Architecture constraints enforced by the build
 
