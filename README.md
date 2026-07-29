@@ -133,7 +133,7 @@ session, not after.
 ```
 
 Two layers, like leak-check: patterns first (`packages/fallbacks/distress.py`,
-free, always runs), then a classifier for what a regex cannot see. Three
+free, always runs), then a classifier for what a regex cannot see. Four
 properties are load-bearing:
 
 - **A screen that alerts nobody is unbuildable, not discouraged.** `PipelineDeps`
