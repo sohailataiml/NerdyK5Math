@@ -84,6 +84,14 @@ RUNS_PAGE = """
   .n-tier  { font-size: 9px; fill: currentColor; opacity: .65; }
   .edge { stroke: rgba(128,128,128,.45); stroke-width: 1.5; fill: none; }
   .edge.taken { stroke: #5b8def; stroke-width: 2.5; }
+  .active-stage { margin-top: .9rem; border: 1px solid rgba(217,139,58,.5);
+                  border-left: 4px solid #d98b3a; border-radius: 10px;
+                  background: rgba(217,139,58,.05); }
+  .active-stage > header { display: flex; align-items: baseline; gap: .6rem;
+                           flex-wrap: wrap; padding: .55rem .9rem; }
+  .active-stage h3 { font-size: .95rem; margin: 0; }
+  .active-stage .io { padding: 0 .9rem .9rem; }
+  .active-stage pre { max-height: 15rem; }
   .timeline { margin-top: 1.5rem; }
   .timeline li { font-size: .8rem; opacity: .85; margin-bottom: .15rem; }
   .warn { color: #b3452f; font-weight: 600; }
@@ -285,6 +293,34 @@ function renderTour() {
       </div>
       <div class="narration">${narrate(current)}</div>
       ${canvas(TOPOLOGY, seen, currentNode)}
+      ${current ? activeStage(current) : ''}
+    </div>`;
+}
+
+/* The lit node's own in/out, inside the tour.
+
+   It used to scroll the page to the matching card instead, which meant the
+   canvas — the thing the tour is about — left the viewport on the first step,
+   and Play turned into a page that scrolled itself. Bringing one stage's detail
+   to the reader keeps the graph and the payload on screen together, which is
+   the comparison the walkthrough exists to make. The full list stays below,
+   unscrolled, for anyone who wants to browse rather than be walked. */
+function activeStage(run) {
+  const badge = run.used_model
+    ? `<span class="tag">${esc(run.model_id)}</span>`
+      + `<span class="tag">${esc(run.prompt_version)}</span>`
+    : '<span class="tag">deterministic — no model call</span>';
+  return `
+    <div class="active-stage">
+      <header>
+        <h3>${esc(run.stage)}${run.ordinal > 1 ? ' #' + run.ordinal : ''}</h3>
+        <span class="tag">${esc(run.outcome)}</span>
+        ${badge}
+      </header>
+      <div class="io">
+        <section><h4>in</h4>${payload(run.inputs)}</section>
+        <section><h4>out</h4>${payload(run.outputs)}</section>
+      </div>
     </div>`;
 }
 
@@ -293,12 +329,12 @@ function wireTour() {
     const host = document.getElementById('tour-host');
     if (host) host.innerHTML = renderTour();
     wireTour();
-    if (TOUR && TOUR.cursor >= 0) {
-      const card = document.getElementById('stage-' + TOUR.cursor);
-      if (card) card.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-      document.querySelectorAll('.stage').forEach((el, i) =>
-        el.style.outline = i === TOUR.cursor ? '2px solid #d98b3a' : 'none');
-    }
+    // Deliberately no scrolling. The tour renders the lit node's detail in
+    // place, so moving the page would only take the canvas away from the reader.
+    // The stage list below is still marked, for anyone who scrolls there by
+    // choice rather than by being dragged.
+    document.querySelectorAll('.stage').forEach((el, i) =>
+      el.style.outline = (TOUR && i === TOUR.cursor) ? '2px solid #d98b3a' : 'none');
   };
   const prev = document.getElementById('t-prev');
   const next = document.getElementById('t-next');
