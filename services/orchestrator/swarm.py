@@ -132,6 +132,15 @@ class SwarmState(TypedDict, total=False):
     hint_level: int
     attempt: int
     student_id: UUID | None
+    attempt_id: UUID | None
+    """The `Attempt` row this run is judging, when the caller has one.
+
+    §5 keys `DiagnosisLog` by attempt, so without it a diagnosis can be recorded
+    as an event and not as a row — which is exactly how `diagnosis_log` came to
+    be empty in every real session. A script that never creates an `Attempt`
+    passes `None` and gets the event log only.
+    """
+
     degraded: list[str]
 
     screened: StageOutcome[safety.SafetyScreen] | None
@@ -217,6 +226,35 @@ def _run_shadow(
         leak_checker_version=checked.value.checker_version,
         leak_reason=checked.value.reason,
         llm_call_id=produced.llm_call_id,
+    )
+
+
+def _record_diagnosis(
+    deps: PipelineDeps,
+    diagnosed: StageOutcome[diagnose.Diagnosis],
+    *,
+    attempt_id: UUID | None,
+) -> None:
+    """Persist §5's `DiagnosisLog`, when there is an attempt to key it to.
+
+    Abstentions are recorded too, deliberately. `unknown` is 52% of real
+    diagnoses on fixture content, and a table holding only the confident ones
+    would report a diagnoser that is always right about everything it has an
+    opinion on while hiding how rarely it has one. §8 wants the `unknown` rate as
+    a first-class metric, which means the abstention has to be a row.
+    """
+    if deps.diagnosis_sink is None or attempt_id is None:
+        return
+    value = diagnosed.value
+    deps.diagnosis_sink.record(
+        attempt_id=attempt_id,
+        tag=value.tag,
+        confidence=value.confidence,
+        evidence=value.evidence,
+        source=value.source,
+        # The domain entity refuses an LLM-sourced diagnosis with no call id
+        # (M0.4's other half), so this join is enforced rather than hoped for.
+        llm_call_id=diagnosed.llm_call_id,
     )
 
 
@@ -331,6 +369,7 @@ def _diagnose_agent(state: SwarmState) -> Command[Literal["retrieve_agent"]]:
     if diagnosed.used_fallback:
         degraded.append("diagnose")
 
+    _record_diagnosis(deps, diagnosed, attempt_id=state.get("attempt_id"))
     deps.recorder.state_changed(frm=SessionState.DIAGNOSING, to=SessionState.RETRIEVING_CURRICULUM)
     return Command(
         goto="retrieve_agent",
@@ -746,6 +785,7 @@ def run(
     attempt: int,
     student_id: UUID | None,
     screened: StageOutcome[safety.SafetyScreen] | None = None,
+    attempt_id: UUID | None = None,
 ) -> AttemptResult:
     """Invoke the swarm for one attempt and return the terminal `AttemptResult`."""
     final_state = SWARM.invoke(
@@ -757,6 +797,7 @@ def run(
             "hint_level": hint_level,
             "attempt": attempt,
             "student_id": student_id,
+            "attempt_id": attempt_id,
             "screened": screened,
             "degraded": [],
         }

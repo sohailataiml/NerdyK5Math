@@ -306,6 +306,7 @@ def submit_answer(
         student_id=student_id,
         record_submission=False,  # already logged above, in the right order
         screened=screened,  # already screened above, before the answer was judged
+        attempt_id=attempt.id,  # so the diagnosis is a row, not only an event
     )
 
     session_row.attempt_count = attempt_number

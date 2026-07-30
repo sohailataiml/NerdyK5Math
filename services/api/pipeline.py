@@ -47,6 +47,7 @@ from packages.llm import DatabaseLedger, LLMClient
 from packages.llm.protocol import Transport
 from packages.prompts import PromptRegistry
 from packages.telemetry import DatabaseEventSink, EventRecorder
+from services.orchestrator.diagnoses import DatabaseDiagnosisSink
 from services.orchestrator.grades import DatabaseGradeSink
 from services.orchestrator.hints import DatabaseHintSink
 from services.orchestrator.review import DatabaseReviewSink
@@ -131,6 +132,12 @@ def build_deps(db: DbSession, session_id: uuid.UUID) -> PipelineDeps:
         # "what was the grade on this attempt" becomes a timeline scan rather
         # than a lookup — a weak version of the auditability §12 argues for.
         grade_sink=DatabaseGradeSink(db),
+        # §5's DiagnosisLog, and the same argument one table over. §8 makes
+        # diagnoser accuracy and calibration against teacher-confirmed tags the
+        # core quality metric of the system; that is a join, and this is the side
+        # of it the pipeline owns. Without this the table stays empty and Phase
+        # 0's calibration gate has nothing indexed to measure.
+        diagnosis_sink=DatabaseDiagnosisSink(db),
         # Without this the student page tells a child their teacher will look at
         # their work and nobody is told (§3.6). Phase 0 is 100% review, so in
         # shadow mode every finished session lands in the queue.

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-from packages.domain.enums import GradeBand, ReviewReason, SafetyCategory
+from packages.domain.enums import DiagnosisSource, GradeBand, ReviewReason, SafetyCategory
 from packages.domain.models import GradeResult, HintLog, ShadowCandidate
 from packages.llm import LLMClient
 from packages.prompts import PromptRegistry
@@ -76,6 +76,29 @@ class HintSink(Protocol):
     """
 
     def record(self, hint: HintLog) -> object: ...
+
+
+class DiagnosisSink(Protocol):
+    """Where §5's `DiagnosisLog` rows go.
+
+    Takes the diagnosis's parts rather than a built entity, unlike `GradeSink`.
+    The reason is the taxonomy: `DiagnosisLog.misconception_tag_id` is a foreign
+    key and the stage produces a *label*, so something has to resolve one to the
+    other against the authored tag table. Doing that behind this Protocol keeps
+    the orchestrator from needing the taxonomy — and keeps the rule that an
+    unrecognised label does not become a new tag in one place.
+    """
+
+    def record(
+        self,
+        *,
+        attempt_id: UUID,
+        tag: str,
+        confidence: float,
+        evidence: str,
+        source: DiagnosisSource,
+        llm_call_id: UUID | None = None,
+    ) -> object: ...
 
 
 class GradeSink(Protocol):
@@ -188,6 +211,17 @@ class PipelineDeps:
     hint_sink: HintSink | None = None
     """Where §5's `HintLog` rows go. `None` means the text of what a child read
     is not kept, which is a valid choice for a script and not for a pilot."""
+
+    diagnosis_sink: DiagnosisSink | None = None
+    """Where §5's `DiagnosisLog` rows go.
+
+    `None` means diagnoses exist only as events in the timeline, which is what
+    the pipeline did until now — leaving `diagnosis_log` a table nothing wrote
+    to. §8 makes diagnoser accuracy and calibration against teacher-confirmed
+    tags the core quality metric of the whole system, and that measurement is a
+    join this table is one side of. Fine for a script; not for a phase whose exit
+    gate is calibration.
+    """
 
     grade_sink: GradeSink | None = None
     """Where §5's `GradeResult` rows go.

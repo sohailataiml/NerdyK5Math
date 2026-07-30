@@ -80,6 +80,7 @@ def run_attempt(
     student_id: UUID | None = None,
     record_submission: bool = True,
     screened: StageOutcome[safety.SafetyScreen] | None = None,
+    attempt_id: UUID | None = None,
 ) -> AttemptResult:
     """Diagnose -> retrieve -> generate -> leak-check, producing one hint.
 
@@ -93,6 +94,10 @@ def run_attempt(
     `screen_submission` passes the outcome in, and the swarm carries it rather
     than screening the child twice. Left `None`, the swarm screens — which is
     right for a caller whose only entry point this is.
+
+    `attempt_id` is what makes the diagnosis durable, for the same reason
+    `check_answer` needs one to make a grade durable: §5 keys both by attempt. A
+    caller that does not supply one gets the event log and nothing else.
     """
     if record_submission:
         deps.recorder.answer_submitted(attempt_number=attempt, answer=student_answer)
@@ -106,6 +111,7 @@ def run_attempt(
         attempt=attempt,
         student_id=student_id,
         screened=screened,
+        attempt_id=attempt_id,
     )
 
 
