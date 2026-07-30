@@ -44,7 +44,7 @@ Please look at slides below for a quick understanding of the architecture:
 
 **M0 is complete apart from M0.11; Phase 0's engineering is complete and blocked
 on people, not code.** There is a running application — the API, both client
-surfaces, six implemented pipeline stages, and 523 tests. M0 is the ground floor
+surfaces, six implemented pipeline stages, and 559 tests. M0 is the ground floor
 the rest sits on:
 
 | Task | State |
@@ -535,6 +535,32 @@ The page shows the hint the child saw beside the one the model generated but
 never displayed, and asks which would have helped more. Every queue is scoped per
 student — a teacher sees their own class and nothing else, enforced by M0.9's
 policy on each row.
+
+**Class overview** — the third teacher surface, at
+`/teacher/dashboard?as=<teacher-principal-id>`, data at `/teacher/class-summary`:
+
+The other two are queues: they ask "judge this row" and say nothing across rows,
+so a teacher working either of them cannot see that the same misconception has now
+been diagnosed three times for the same child. That is the one thing this adds, and
+it is why the row sorts by who needs looking at rather than alphabetically.
+
+It could not have existed before `diagnosis_log` had a producer — per-student
+misconception history is a query over that table, and the answer was "no rows" in
+every real session until it got one.
+
+Two properties are load-bearing and both have tests that fail if they are undone:
+
+- **A rate the data cannot support is withheld, not rendered.** Below
+  `MIN_FOR_A_RATE` observations the page prints `2 of 3 · too few to rate` instead
+  of `67%`. `eval.harness.cli phase0` already refuses to report its gates on thin
+  data; a surface a teacher actually reads should not be held to a lower standard.
+- **Sessions opened and never answered are excluded from every rate and counted
+  separately.** On the current pilot data that is 57 of 104 — a child who walked
+  away is not a child who got it wrong, and a rate over all sessions says they are.
+
+The abstention rate is shown next to the misconception counts on purpose: without
+it the counts read as a complete account of the class's errors when they are a
+partial one.
 
 > **Authentication is a pilot-grade stand-in.** `services/api/auth.py` trusts an
 > `x-principal-id` header; there is no password, session, or token signature.

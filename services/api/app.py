@@ -20,11 +20,13 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from services.api.admin import router as admin_router
+from services.api.dashboard_page import DASHBOARD_PAGE
 from services.api.review_page import REVIEW_PAGE
 from services.api.runs_page import RUNS_PAGE
 from services.api.student import router as student_router
 from services.api.student_page import STUDENT_PAGE
 from services.api.teacher import router as teacher_router
+from services.api.teacher_dashboard import router as dashboard_router
 
 app = FastAPI(
     title="Tutor",
@@ -32,6 +34,7 @@ app = FastAPI(
     version="0.1.0",
 )
 app.include_router(teacher_router)
+app.include_router(dashboard_router)
 app.include_router(student_router)
 app.include_router(admin_router)
 
@@ -191,3 +194,20 @@ def review_page() -> str:
     from the other.
     """
     return REVIEW_PAGE
+
+
+@app.get("/teacher/dashboard", response_class=HTMLResponse)
+def dashboard_page() -> str:
+    """The class overview (§3.6, §8).
+
+    The third teacher surface, and the only one that is about the child rather
+    than about a session. Review and rating are both queues — they ask "judge this
+    row" and say nothing across rows, so a teacher working either of them cannot
+    see that the same misconception has come up four times for the same child.
+
+    Deliberately a peer of the queue rather than a landing page in front of it. A
+    dashboard that intercepts a teacher on the way to work they were already going
+    to do is a tax on that work; this one is somewhere they go when the question is
+    "who needs me", not "what is next".
+    """
+    return DASHBOARD_PAGE

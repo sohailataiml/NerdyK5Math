@@ -88,6 +88,58 @@ a table, an endpoint, and a console, with nothing ever enqueuing a row — which
 suggests the pattern is worth checking for deliberately rather than waiting to
 notice it twice.
 
+### `diagnosis_log` was the third one, found by checking deliberately
+
+Same shape again, and this is the instance that argues for the check: `ReviewItem`
+and `GradeResult` were both noticed by accident, and this one was found by looking
+for the pattern on purpose. Every attempt ran the diagnoser; `diagnosis_log` was
+empty in every real session; the only code that ever inserted a row was
+`scripts/demo_session.py`.
+
+It is also the most expensive of the three to have missed. §8 names diagnoser
+accuracy and calibration against teacher-confirmed tags as the core quality metric
+for the whole system, and that metric is a join — diagnoses on one side,
+`ReviewVerdict` on the other. The left side was recoverable only by scanning
+`pipeline_event` detail JSON, which is unindexed, untyped, and not a contract:
+workable for one session, not for a phase whose exit gate *is* the measurement.
+
+Two decisions in the fix are worth recording because neither is obvious:
+
+- **Abstentions are rows.** `unknown` is the majority of real diagnoses on
+  fixture content. A table holding only confident diagnoses would report a
+  diagnoser that is always right about everything it has an opinion on, while
+  hiding how rarely it has one — so the `unknown` rate has to be queryable too.
+- **An unrecognised label resolves to no tag, not to a new tag.** §3.1 confines
+  the diagnoser's vocabulary to the taxonomy, and P0.1 authors that taxonomy with
+  a teacher. A sink that inserted a row for every unfamiliar label would let the
+  model extend it at runtime. The label is preserved in `evidence` instead, so an
+  out-of-vocabulary reply stays measurable rather than being discarded.
+
+### The teacher surfaces were both queues, so nothing showed a child over time
+
+`/teacher/rate` and `/teacher/review` each ask "judge this row" and neither says
+anything across rows. The consequence is not a missing feature so much as a missing
+question: a teacher could reach a verdict on twelve sessions without ever learning
+that three of them were the same child making the same mistake.
+
+`/teacher/dashboard` is that view, and it is the first thing in the repo that
+`diagnosis_log` having a producer actually buys — per-student misconception history
+is a query over that table, so before this week the honest version of the page was
+empty.
+
+Building it surfaced one thing worth recording on its own. **The dashboard
+independently reproduced the 57-abandoned-session correction** that
+`eval.harness.cli phase0` reports. That figure was derived once, by hand, for the
+gate readout; the dashboard computes it from the same append-only rows by a
+different path and agrees. Two independent derivations agreeing is the cheapest
+evidence available that neither is an artefact of how it was counted — and the
+reason both are worth keeping rather than consolidating.
+
+The rate-withholding rule is a deliberate refusal, not a limitation: below five
+observations the page prints the count and no percentage. A dashboard is the one
+surface where a number gets acted on without being interrogated, so `1 of 1 = 100%`
+beside a child's name is worse than no number at all.
+
 ### A teacher could not see the grade they were being asked to confirm
 
 The review console showed the child's answers and the correct answer, but not

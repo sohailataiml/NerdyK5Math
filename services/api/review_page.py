@@ -70,17 +70,32 @@ REVIEW_PAGE = """
   pre { font-size: .78rem; line-height: 1.5; overflow-x: auto; padding: .8rem;
         border-radius: 8px; background: rgba(128,128,128,.12); margin: .6rem 0 0; }
   .empty { opacity: .7; }
+  .nav { margin: .5rem 0 1.25rem; font-size: .9rem; }
+  .nav a { color: inherit; text-decoration: underline; opacity: .8; }
+  .nav a:hover, .nav a:focus-visible { opacity: 1; }
 </style>
 
 <h1>Review queue</h1>
 <p class="sub">Sessions from your class that need a look. Phase 0 reviews every
 one, so most will say <em>audit sample</em> — that means nothing went wrong, not
 that nothing is worth reading.</p>
+<nav class="nav" aria-label="Teacher surfaces">
+  <a href="#" id="to-dashboard">Class overview</a> ·
+  <a href="#" id="to-rate">Rate generated hints</a>
+</nav>
 <div id="queue"><p class="empty">Loading…</p></div>
 
 <script>
 const principal = new URLSearchParams(location.search).get('as') || '';
 const headers = {'content-type': 'application/json', 'x-principal-id': principal};
+
+/* Carry the principal across rather than making a teacher re-paste it — but omit
+   it entirely when absent, so a missing id is not propagated into a link that then
+   looks broken rather than incomplete. */
+for (const [id, href] of [['to-dashboard','/teacher/dashboard'], ['to-rate','/teacher/rate']]) {
+  document.getElementById(id).href =
+    principal ? `${href}?as=${encodeURIComponent(principal)}` : href;
+}
 
 function esc(s) {
   return (s ?? '').replace(/[&<>"]/g, c =>
@@ -91,8 +106,13 @@ async function load() {
   const queue = document.getElementById('queue');
   const res = await fetch('/teacher/review-queue', {headers});
   if (!res.ok) {
-    queue.innerHTML = '<p class="empty">Could not load the queue (' + res.status +
-      '). Add <code>?as=&lt;your principal id&gt;</code> to the address.</p>';
+    /* A bare 401 sends a teacher looking for a login screen that does not exist.
+       The cause is always a missing `as=` parameter, so say that. */
+    queue.innerHTML = res.status === 401
+      ? '<p class="empty">No principal id in the address. Open this page as ' +
+        '<code>/teacher/review?as=&lt;your principal id&gt;</code> — ' +
+        '<code>python -m scripts.seed_pilot</code> prints it.</p>'
+      : '<p class="empty">Could not load the queue (' + res.status + ').</p>';
     return;
   }
   const items = await res.json();
